@@ -28,7 +28,7 @@ public class Session
 
     private CancellationTokenSource calcelRead = new CancellationTokenSource();
 
-    private bool closed = false;
+    private Int32 closed = 0;
 
     private  Mutex mtx = new Mutex();
 
@@ -73,35 +73,25 @@ public class Session
         }
     }
 
-    public void Close()
+    public void Close() 
     {
-        Action<Session>? closeCallback = null;
-        var flagWait = false;
-        mtx.WaitOne();
-        if(closed){
+        if(0 == Interlocked.CompareExchange(ref closed,1,0)){
+            Action<Session>? closeCallback = null;
+            mtx.WaitOne();
+            calcelRead.Cancel();
+            sendList.Post(null);
+            closeCallback = this.closeCallback;
+            if(!(sendTask == null && recvTask == null))
+            {
+                sendTask?.Wait();
+                recvTask?.Wait();
+            }
             mtx.ReleaseMutex();
-            return;
-        }
-
-        closed = true;
-        calcelRead.Cancel();
-        sendList.Post(null);
-        if(!(sendTask == null && recvTask == null))
-        {
-            flagWait = true;
-        }
-        closeCallback = this.closeCallback;
-        mtx.ReleaseMutex();        
-
-        if(flagWait)
-        {
-            sendTask?.Wait();
-            recvTask?.Wait();
-        }
-
-        if(closeCallback != null)
-        {
-            closeCallback(this);
+            socket.Close();
+            if(closeCallback != null)
+            {
+                closeCallback(this);
+            }
         }
     }
 
@@ -128,14 +118,26 @@ public class Session
                         break;
                     }
                 }
-            }
-            catch(Exception e)
+            } 
+            catch(Exception e) 
             {
-                Console.WriteLine(e);
-            }
-            finally
+                Console.WriteLine(e);   
+            } 
+            finally 
             {
-               Close();
+                if(0 == Interlocked.CompareExchange(ref closed,1,0)){
+                    Action<Session>? closeCallback = null;
+                    mtx.WaitOne();
+                    calcelRead.Cancel();
+                    closeCallback = this.closeCallback;
+                    recvTask?.Wait();
+                    mtx.ReleaseMutex();
+                    socket.Close();
+                    if(closeCallback != null)
+                    {
+                        closeCallback(this);
+                    }     
+                }
             }
         });
     }
@@ -156,10 +158,8 @@ public class Session
                         break;
                     } else {
                         bool ok = packetCallback(this,packet);
-                        Console.WriteLine(ok); 
                         if(!ok)
                         {
-                            Console.WriteLine("break");
                             break;
                         }
                     }
@@ -171,7 +171,19 @@ public class Session
             }
             finally
             {   
-                Close();
+                if(0 == Interlocked.CompareExchange(ref closed,1,0)){
+                    Action<Session>? closeCallback = null;
+                    sendList.Post(null);
+                    mtx.WaitOne();
+                    closeCallback = this.closeCallback;
+                    sendTask?.Wait();
+                    mtx.ReleaseMutex();
+                    socket.Close();
+                    if(closeCallback != null)
+                    {
+                        closeCallback(this);
+                    } 
+                }
             }
         });
     }
