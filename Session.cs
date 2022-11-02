@@ -14,12 +14,12 @@ public interface MessageI
 
 public interface PacketReceiverI
 {
-    Task<Object> Recv(NetworkStream stream,CancellationToken token);
+    Task<Object?> Recv(System.Net.Sockets.NetworkStream stream,CancellationToken token);
 }
 
-public class Socket
+public class Session
 {
-    private TcpClient socket;
+    private Socket socket;
     private BufferBlock<MessageI?> sendList = new BufferBlock<MessageI?>();
 
     private Task? sendTask;
@@ -32,28 +32,28 @@ public class Socket
 
     private  Mutex mtx = new Mutex();
 
-    private Action<Socket>? closeCallback;
+    private Action<Session>? closeCallback;
 
-    Socket(TcpClient c)
+    public Session(Socket s)
     {
-        socket = c;
+        socket = s;
     }
 
-    ~Socket()
+    ~Session()
     {
         socket?.Close();
         sendTask?.Dispose();
         recvTask?.Dispose();
     }
 
-    public Socket SetCloseCallback(Action<Socket> closeCallback) {
+    public Session SetCloseCallback(Action<Session> closeCallback) {
         mtx.WaitOne();
         this.closeCallback = closeCallback;
         mtx.ReleaseMutex();
         return this;
     }
 
-    public Socket Start(PacketReceiverI receiver,Func<Socket, Object,bool> packetCallback) 
+    public Session Start(PacketReceiverI receiver,Func<Session, Object,bool> packetCallback) 
     {
         mtx.WaitOne();
         if(sendTask == null && recvTask == null)
@@ -66,7 +66,7 @@ public class Socket
     }
 
     public async void Send(MessageI msg) 
-    {
+    {   
         if(msg != null)
         {
             await sendList.SendAsync(msg);
@@ -75,7 +75,7 @@ public class Socket
 
     public void Close()
     {
-        Action<Socket>? closeCallback = null;
+        Action<Session>? closeCallback = null;
         var flagWait = false;
         mtx.WaitOne();
         if(closed){
@@ -111,7 +111,7 @@ public class Socket
         {
             try
             {
-                var writer = socket.GetStream();
+                using NetworkStream writer = new(socket, ownsSocket: true);
                 while (true)
                 {
                     var msg = await sendList.ReceiveAsync();
@@ -129,6 +129,10 @@ public class Socket
                     }
                 }
             }
+            catch(Exception e)
+            {
+                Console.WriteLine(e);
+            }
             finally
             {
                Close();
@@ -136,30 +140,37 @@ public class Socket
         });
     }
 
-    private void recvThread(PacketReceiverI receiver,Func<Socket, Object,bool> packetCallback)
+    private void recvThread(PacketReceiverI receiver,Func<Session, Object,bool> packetCallback)
     {
         recvTask = Task.Run(async () =>
         {
             try
             {
-                var stream = socket.GetStream();
+                using NetworkStream reader = new(socket, ownsSocket: true);
                 var cancelToken = calcelRead.Token;
                 while (true)
                 {
-                    var packet = await receiver.Recv(stream,cancelToken);
-                    if(cancelToken.IsCancellationRequested)
+                    var packet = await receiver.Recv(reader,cancelToken);
+                    if(packet == null)
                     {
                         break;
                     } else {
-                        if(!packetCallback(this,packet))
+                        bool ok = packetCallback(this,packet);
+                        Console.WriteLine(ok); 
+                        if(!ok)
                         {
+                            Console.WriteLine("break");
                             break;
                         }
                     }
                 }
             }
-            finally
+            catch(Exception e)
             {
+                Console.WriteLine(e);
+            }
+            finally
+            {   
                 Close();
             }
         });
