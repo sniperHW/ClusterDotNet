@@ -61,9 +61,11 @@ public class Session
 
     private Action<Session>? closeCallback;
 
-    private Func<bool>? onRecvTimeout;
+    private Action<Session>? onRecvTimeout;
 
     private int recvTimeout = 0;
+
+    private int threadCount = 0;
 
     public Session(Socket s)
     {
@@ -77,7 +79,7 @@ public class Session
         recvTask?.Dispose();
     }
 
-    public Session SetRecvTimeout(int recvTimeout,Func<bool>? onRecvTimeout)
+    public Session SetRecvTimeout(int recvTimeout,Action<Session>? onRecvTimeout)
     {
         mtx.WaitOne();
         this.recvTimeout = recvTimeout;
@@ -129,11 +131,9 @@ public class Session
     {
         if(0 == Interlocked.CompareExchange(ref started,1,0)){
             mtx.WaitOne();
-            if(sendTask is null && recvTask is null)
-            {
-                sendThread();
-                recvThread(receiver,packetCallback);
-            }
+            threadCount = 2;
+            sendThread();
+            recvThread(receiver,packetCallback);
             mtx.ReleaseMutex();
         }
         return this;
@@ -198,19 +198,20 @@ public class Session
             finally 
             {
                 if(0 == Interlocked.CompareExchange(ref closed,1,0)){
+                    callCancel();    
+                }
+
+
+                if(Interlocked.Add(ref threadCount,-1) == 0) {
                     Action<Session>? closeCallback = null;
-                    Task? recvTask;
-                    callCancel();
                     mtx.WaitOne();
                     closeCallback = this.closeCallback;
-                    recvTask = this.recvTask; 
                     mtx.ReleaseMutex();
-                    recvTask?.Wait();
                     socket.Close();
                     if(!(closeCallback is null))
                     {
                         closeCallback(this);
-                    }     
+                    }                
                 }
             }
         });
@@ -222,7 +223,7 @@ public class Session
         {
             using NetworkStream stream = new(socket, ownsSocket: true);
             var reader = new StreamReader(stream);
-            for(;;) {
+            for(;closed==0;) {
                 reader.Token = resetCancelToken();
                 try{
                     var packet = await receiver.Recv(reader);
@@ -233,43 +234,43 @@ public class Session
                         break;
                     }                    
                 }
-                catch(Exception e)
+                catch(OperationCanceledException)
                 {
-                    if(!reader.Token.IsCancellationRequested)
-                    {
-                        Console.WriteLine(e);
+                    if(closed==1) {
                         break;
                     } else {
-                        if(closed==1) {
-                            break;
-                        } else {
-                            Func<bool>? onRecvTimeout;
-                            mtx.WaitOne();
-                            onRecvTimeout = this.onRecvTimeout;
-                            mtx.ReleaseMutex();
-                            if(onRecvTimeout == null || !onRecvTimeout()){
-                                break;
-                            }
+                        Action<Session>? onRecvTimeout;
+                        mtx.WaitOne();
+                        onRecvTimeout = this.onRecvTimeout;
+                        mtx.ReleaseMutex();
+                        if(!(onRecvTimeout is null)){
+                            onRecvTimeout(this);
                         }
-                    }
+                    }                    
+                }
+                catch(Exception e)
+                {
+                    Console.WriteLine(e);
                 }
             }
 
             if(0 == Interlocked.CompareExchange(ref closed,1,0)){
-                Action<Session>? closeCallback = null;
-                Task? sendTask;
                 sendList.Post(null);
+            }
+
+            if(Interlocked.Add(ref threadCount,-1) == 0) {
+                Action<Session>? closeCallback = null;
                 mtx.WaitOne();
                 closeCallback = this.closeCallback;
-                sendTask = this.sendTask;
                 mtx.ReleaseMutex();
-                sendTask?.Wait();
                 socket.Close();
                 if(!(closeCallback is null))
                 {
                     closeCallback(this);
-                }
+                }                
             }
+
+
         });
     }
 }
