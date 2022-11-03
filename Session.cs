@@ -41,17 +41,55 @@ public class Session
         }
     }
 
+    private class Cancellation
+    {
+        private Mutex mtx = new Mutex();
+
+        private CancellationTokenSource token = new CancellationTokenSource(); 
+        
+        public  int Timeout = 0;
+
+        private bool canceled = false;
+
+        public void Cancel()
+        {
+            mtx.WaitOne();
+            canceled = true;
+            token.Cancel();
+            mtx.ReleaseMutex();
+        }
+
+        public System.Threading.CancellationToken ResetToken()
+        {
+
+            System.Threading.CancellationToken tk;
+
+            mtx.WaitOne();
+
+            if(!canceled){
+                if(!token.TryReset())
+                {
+                    token = new CancellationTokenSource();
+                }
+                if(Timeout>0)
+                {
+                    token.CancelAfter(Timeout);
+                }
+            }
+
+            tk = token.Token;
+
+            mtx.ReleaseMutex();
+
+            return tk;
+        }
+    }
+
     private Socket socket;
+
     private BufferBlock<MessageI?> sendList = new BufferBlock<MessageI?>();
 
-    private Task? sendTask;
-
-    private Task? recvTask;
-
-
-    private Mutex mtxCancellation = new Mutex();
-
-    private CancellationTokenSource cancelToken = new CancellationTokenSource();
+    private Cancellation cancellation = new Cancellation();
 
     private int closed = 0;
 
@@ -63,8 +101,6 @@ public class Session
 
     private Action<Session>? onRecvTimeout;
 
-    private int recvTimeout = 0;
-
     private int threadCount = 0;
 
     public Session(Socket s)
@@ -74,17 +110,15 @@ public class Session
 
     ~Session()
     {
-        socket?.Close();
-        sendTask?.Dispose();
-        recvTask?.Dispose();
+        socket.Close();
     }
 
     public Session SetRecvTimeout(int recvTimeout,Action<Session>? onRecvTimeout)
     {
         mtx.WaitOne();
-        this.recvTimeout = recvTimeout;
         this.onRecvTimeout = onRecvTimeout;
         mtx.ReleaseMutex();
+        cancellation.Timeout = recvTimeout;
         return this;
     }
 
@@ -95,46 +129,14 @@ public class Session
         return this;
     }
 
-    private void callCancel()
-    {
-        mtx.WaitOne();
-        cancelToken.Cancel();
-        mtx.ReleaseMutex();
-    }
 
-    private System.Threading.CancellationToken resetCancelToken()
-    {
-
-        System.Threading.CancellationToken token;
-
-        mtx.WaitOne();
-
-        if(closed == 0){
-            if(!cancelToken.TryReset())
-            {
-                cancelToken = new CancellationTokenSource();
-            }
-            if(recvTimeout>0)
-            {
-                cancelToken.CancelAfter(recvTimeout);
-            }
-        }
-
-        token = cancelToken.Token;
-
-        mtx.ReleaseMutex();
-
-        return token;
-    }
 
     public Session Start(PacketReceiverI receiver,Func<Session, Object,bool> packetCallback) 
     {
         if(0 == Interlocked.CompareExchange(ref started,1,0)){
-            mtx.WaitOne();
             threadCount = 2;
             sendThread();
             recvThread(receiver,packetCallback);
-            mtx.ReleaseMutex();
         }
         return this;
     }
@@ -152,7 +154,7 @@ public class Session
         if(0 == Interlocked.CompareExchange(ref closed,1,0)){
             Action<Session>? closeCallback = null;
             sendList.Post(null);
-            callCancel();
+            cancellation.Cancel();
             mtx.WaitOne();
             closeCallback = this.closeCallback;
             mtx.ReleaseMutex();
@@ -169,7 +171,7 @@ public class Session
 
     private void sendThread()
     {
-        sendTask = Task.Run(async () =>
+        Task.Run(async () =>
         {
             try
             {
@@ -198,7 +200,7 @@ public class Session
             finally 
             {
                 if(0 == Interlocked.CompareExchange(ref closed,1,0)){
-                    callCancel();    
+                    cancellation.Cancel();    
                 }
 
 
@@ -219,12 +221,12 @@ public class Session
 
     private void recvThread(PacketReceiverI receiver,Func<Session, Object,bool> packetCallback)
     {
-        recvTask = Task.Run(async () =>
+        Task.Run(async () =>
         {
             using NetworkStream stream = new(socket, ownsSocket: true);
             var reader = new StreamReader(stream);
             for(;closed==0;) {
-                reader.Token = resetCancelToken();
+                reader.Token = cancellation.ResetToken();
                 try{
                     var packet = await receiver.Recv(reader);
                     if(packet is null)
@@ -269,8 +271,6 @@ public class Session
                     closeCallback(this);
                 }                
             }
-
-
         });
     }
 }
