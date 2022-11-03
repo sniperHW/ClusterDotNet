@@ -12,13 +12,36 @@ public interface MessageI
     byte[] Encode();
 }
 
+public interface ReceiveAbleI
+{
+    Task<int> Recv(byte[] buffer, int offset, int count);
+}
+
 public interface PacketReceiverI
 {
-    Task<Object?> Recv(System.Net.Sockets.NetworkStream stream,CancellationToken token);
+    Task<Object?> Recv(ReceiveAbleI receiver);
 }
 
 public class Session
 {
+
+    private class StreamReceiver : ReceiveAbleI
+    {
+        private CancellationToken token;
+        private NetworkStream stream;
+
+        public StreamReceiver(NetworkStream stream,CancellationToken token)
+        {
+            this.stream = stream;
+            this.token = token;
+        }
+
+        public Task<int> Recv(byte[] buff, int offset, int count) 
+        {
+            return stream.ReadAsync(buff, offset, count, token);
+        }
+    }
+
     private Socket socket;
     private BufferBlock<MessageI?> sendList = new BufferBlock<MessageI?>();
 
@@ -56,7 +79,7 @@ public class Session
     public Session Start(PacketReceiverI receiver,Func<Session, Object,bool> packetCallback) 
     {
         mtx.WaitOne();
-        if(sendTask == null && recvTask == null)
+        if(sendTask is null && recvTask is null)
         {
             sendThread();
             recvThread(receiver,packetCallback);
@@ -67,7 +90,7 @@ public class Session
 
     public async void Send(MessageI msg) 
     {   
-        if(msg != null)
+        if(!(msg is null))
         {
             await sendList.SendAsync(msg);
         }
@@ -77,18 +100,19 @@ public class Session
     {
         if(0 == Interlocked.CompareExchange(ref closed,1,0)){
             Action<Session>? closeCallback = null;
+            Task? sendTask;
+            Task? recvTask;
             mtx.WaitOne();
             calcelRead.Cancel();
             sendList.Post(null);
             closeCallback = this.closeCallback;
-            if(!(sendTask == null && recvTask == null))
-            {
-                sendTask?.Wait();
-                recvTask?.Wait();
-            }
+            sendTask = this.sendTask;
+            recvTask = this.recvTask;
             mtx.ReleaseMutex();
+            sendTask?.Wait();
+            recvTask?.Wait();
             socket.Close();
-            if(closeCallback != null)
+            if(!(closeCallback is null))
             {
                 closeCallback(this);
             }
@@ -105,10 +129,10 @@ public class Session
                 while (true)
                 {
                     var msg = await sendList.ReceiveAsync();
-                    if(msg != null)
+                    if(!(msg is null))
                     {
                         var data = msg.Encode();
-                        if(data != null)
+                        if(!(data is null))
                         {
                             await writer.WriteAsync(data, 0, data.Length);
                         }
@@ -127,13 +151,15 @@ public class Session
             {
                 if(0 == Interlocked.CompareExchange(ref closed,1,0)){
                     Action<Session>? closeCallback = null;
+                    Task? recvTask;
                     mtx.WaitOne();
                     calcelRead.Cancel();
                     closeCallback = this.closeCallback;
-                    recvTask?.Wait();
+                    recvTask = this.recvTask; 
                     mtx.ReleaseMutex();
+                    recvTask?.Wait();
                     socket.Close();
-                    if(closeCallback != null)
+                    if(!(closeCallback is null))
                     {
                         closeCallback(this);
                     }     
@@ -146,43 +172,46 @@ public class Session
     {
         recvTask = Task.Run(async () =>
         {
+            var cancelToken = calcelRead.Token;
             try
             {
                 using NetworkStream reader = new(socket, ownsSocket: true);
-                var cancelToken = calcelRead.Token;
-                while (true)
+                StreamReceiver streamReceiver = new StreamReceiver(reader,cancelToken); 
+                for(;;)
                 {
-                    var packet = await receiver.Recv(reader,cancelToken);
-                    if(packet == null)
+                    var packet = await receiver.Recv(streamReceiver);
+                    if(packet is null)
                     {
                         break;
-                    } else {
-                        bool ok = packetCallback(this,packet);
-                        if(!ok)
-                        {
-                            break;
-                        }
+                    } else if(!packetCallback(this,packet)){
+                        break;
                     }
+                    
                 }
             }
             catch(Exception e)
             {
-                Console.WriteLine(e);
+                if(!cancelToken.IsCancellationRequested)
+                {
+                    Console.WriteLine(e);
+                }
             }
             finally
             {   
                 if(0 == Interlocked.CompareExchange(ref closed,1,0)){
                     Action<Session>? closeCallback = null;
+                    Task? sendTask;
                     sendList.Post(null);
                     mtx.WaitOne();
                     closeCallback = this.closeCallback;
-                    sendTask?.Wait();
+                    sendTask = this.sendTask;
                     mtx.ReleaseMutex();
+                    sendTask?.Wait();
                     socket.Close();
-                    if(closeCallback != null)
+                    if(!(closeCallback is null))
                     {
                         closeCallback(this);
-                    } 
+                    }
                 }
             }
         });
