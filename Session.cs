@@ -9,7 +9,7 @@ namespace SanguoDotNet;
 
 public interface MessageI 
 {
-    byte[] Encode();
+    void Encode(MemoryStream stream);
 }
 
 public interface StreamReaderI
@@ -24,6 +24,31 @@ public interface PacketReceiverI
 
 public class Session
 {
+
+    private class AtomicValue<T> 
+    {
+        private Mutex mtx = new Mutex();
+
+        private T? _value;
+
+        public T? Value
+        {
+            get
+            {
+                T? value;
+                mtx.WaitOne();
+                value = _value;
+                mtx.ReleaseMutex();
+                return value;
+            }
+            set
+            {
+                mtx.WaitOne();
+                _value = value;
+                mtx.ReleaseMutex();         
+            }
+        }
+    }
 
     private class StreamReader : StreamReaderI
     {
@@ -89,7 +114,9 @@ public class Session
 
     private BufferBlock<MessageI?> sendList = new BufferBlock<MessageI?>();
 
-    private Cancellation cancellation = new Cancellation();
+    private Cancellation readCancellation  = new Cancellation();
+
+    private Cancellation writeCancellation = new Cancellation();
 
     private int closed = 0;
 
@@ -97,9 +124,9 @@ public class Session
 
     private  Mutex mtx = new Mutex();
 
-    private Action<Session>? closeCallback;
+    private AtomicValue<Action<Session>?> closeCallback = new AtomicValue<Action<Session>?>();
 
-    private Action<Session>? onRecvTimeout;
+    private AtomicValue<Action<Session>?> onRecvTimeout = new AtomicValue<Action<Session>?>();
 
     private int threadCount = 0;
 
@@ -115,17 +142,20 @@ public class Session
 
     public Session SetRecvTimeout(int recvTimeout,Action<Session>? onRecvTimeout)
     {
-        mtx.WaitOne();
-        this.onRecvTimeout = onRecvTimeout;
-        mtx.ReleaseMutex();
-        cancellation.Timeout = recvTimeout;
+        this.onRecvTimeout.Value = onRecvTimeout;
+        readCancellation.Timeout = recvTimeout;
+        return this;
+    }
+
+
+    public Session SetSendTimeout(int sendTimeout)
+    {
+        writeCancellation.Timeout = sendTimeout;
         return this;
     }
 
     public Session SetCloseCallback(Action<Session> closeCallback) {
-        mtx.WaitOne();
-        this.closeCallback = closeCallback;
-        mtx.ReleaseMutex();
+        this.closeCallback.Value = closeCallback;
         return this;
     }
 
@@ -152,17 +182,13 @@ public class Session
     public void Close() 
     {
         if(0 == Interlocked.CompareExchange(ref closed,1,0)){
-            Action<Session>? closeCallback = null;
             sendList.Post(null);
-            cancellation.Cancel();
-            mtx.WaitOne();
-            closeCallback = this.closeCallback;
-            mtx.ReleaseMutex();
+            readCancellation.Cancel();
             if(started == 0)
             {
                 socket.Close();
-                if(!(closeCallback is null))
-                {
+                var closeCallback = this.closeCallback.Value;
+                if(!(closeCallback is null)){
                     closeCallback(this);
                 }
             }
@@ -173,48 +199,61 @@ public class Session
     {
         Task.Run(async () =>
         {
-            try
-            {
-                using NetworkStream writer = new(socket, ownsSocket: true);
-                while (true)
-                {
+            const int maxSendSize = 65535;
+            using NetworkStream writer = new(socket, ownsSocket: true);
+            MemoryStream memoryStream = new MemoryStream();
+            bool finish = false;
+            for(;!finish;){
+                try{
                     var msg = await sendList.ReceiveAsync();
-                    if(!(msg is null))
-                    {
-                        var data = msg.Encode();
-                        if(!(data is null))
-                        {
-                            await writer.WriteAsync(data, 0, data.Length);
+                    if(msg is null) {
+                        break;
+                    } else {
+                        msg.Encode(memoryStream);
+                        for (;memoryStream.Length < maxSendSize;){
+                            if(sendList.TryReceive(out msg)){
+                                if(msg is null){
+                                    finish = true;
+                                    break;
+                                } else {
+                                    msg.Encode(memoryStream);
+                                }
+                            } else {
+                                break;
+                            }
+                        }
+
+                        if(memoryStream.Length > 0) {
+                            var data = memoryStream.ToArray();
+                            await writer.WriteAsync(data, 0, data.Length,writeCancellation.ResetToken());
+                            memoryStream.Position = 0;
                         }
                     }
-                    else
-                    {
-                        break;
-                    }
                 }
-            } 
-            catch(Exception e) 
-            {
-                Console.WriteLine(e);   
-            } 
-            finally 
-            {
-                if(0 == Interlocked.CompareExchange(ref closed,1,0)){
-                    cancellation.Cancel();    
+                catch(OperationCanceledException)
+                {
+                    break;
                 }
+                catch(Exception e)
+                {
+                    Console.WriteLine(e);
+                    break;
+                }
+            }
+
+            memoryStream.Dispose();
+
+            if(0 == Interlocked.CompareExchange(ref closed,1,0)){
+                readCancellation.Cancel();    
+            }
 
 
-                if(Interlocked.Add(ref threadCount,-1) == 0) {
-                    Action<Session>? closeCallback = null;
-                    mtx.WaitOne();
-                    closeCallback = this.closeCallback;
-                    mtx.ReleaseMutex();
-                    socket.Close();
-                    if(!(closeCallback is null))
-                    {
-                        closeCallback(this);
-                    }                
-                }
+            if(Interlocked.Add(ref threadCount,-1) == 0) {
+                socket.Close();
+                var closeCallback = this.closeCallback.Value;
+                if(!(closeCallback is null)){
+                    closeCallback(this);
+                }               
             }
         });
     }
@@ -226,7 +265,7 @@ public class Session
             using NetworkStream stream = new(socket, ownsSocket: true);
             var reader = new StreamReader(stream);
             for(;closed==0;) {
-                reader.Token = cancellation.ResetToken();
+                reader.Token = readCancellation.ResetToken();
                 try{
                     var packet = await receiver.Recv(reader);
                     if(packet is null)
@@ -241,18 +280,18 @@ public class Session
                     if(closed==1) {
                         break;
                     } else {
-                        Action<Session>? onRecvTimeout;
-                        mtx.WaitOne();
-                        onRecvTimeout = this.onRecvTimeout;
-                        mtx.ReleaseMutex();
+                        var onRecvTimeout = this.onRecvTimeout.Value;
                         if(!(onRecvTimeout is null)){
                             onRecvTimeout(this);
+                        } else {
+                            break;
                         }
                     }                    
                 }
                 catch(Exception e)
                 {
                     Console.WriteLine(e);
+                    break;
                 }
             }
 
@@ -261,13 +300,9 @@ public class Session
             }
 
             if(Interlocked.Add(ref threadCount,-1) == 0) {
-                Action<Session>? closeCallback = null;
-                mtx.WaitOne();
-                closeCallback = this.closeCallback;
-                mtx.ReleaseMutex();
                 socket.Close();
-                if(!(closeCallback is null))
-                {
+                var closeCallback = this.closeCallback.Value;
+                if(!(closeCallback is null)){
                     closeCallback(this);
                 }                
             }
