@@ -249,33 +249,20 @@ public class RpcClient
 
     private class callContext
     {
-        //public int fired = 0;
-
-        public Mutex mtx = new Mutex();
-
         private Rpc.Proto.rpcResponse? response = null;
 
         private SemaphoreSlim semaphore = new SemaphoreSlim(1);
 
         public async Task<Rpc.Proto.rpcResponse?>  Wait(CancellationToken cancellationToken)
         {
-            Rpc.Proto.rpcResponse? resp;
             await semaphore.WaitAsync(cancellationToken);
-            mtx.WaitOne();
-            resp = response;
-            mtx.ReleaseMutex();
-            return resp;
+            return Interlocked.Exchange(ref response,null);
         }   
 
-        public void Wakeup(Rpc.Proto.rpcResponse response)
+        public void Wakeup(Rpc.Proto.rpcResponse resp)
         {
-            //if(Interlocked.CompareExchange(ref fired,1,0) == 0)
-            //{
-            mtx.WaitOne();
-            this.response = response;
-            mtx.ReleaseMutex();
+            Interlocked.Exchange(ref response,resp);
             semaphore.Release();
-            //}
         } 
     }
     
@@ -309,37 +296,41 @@ public class RpcClient
         mtx.ReleaseMutex();
 
         Exception? e = null;
+        var cancel = false;
 
         Rpc.Proto.rpcResponse? resp = null;
         try{
             channel.SendRequest(request);
             resp = await context.Wait(cancellationToken);
         }
+        catch(OperationCanceledException)
+        {
+            cancel = true;
+        }
         catch(Exception ee)
         {
-            if(!cancellationToken.IsCancellationRequested){
-                e = ee;
-            }
+            e = ee;
         }
 
         if(resp is null) {
             mtx.WaitOne();
             pendingCall.Remove(request.Seq);
             mtx.ReleaseMutex();
-            if(!(e is null)){
-                throw e;
-            } else {
+            if(cancel){
                 //无法区分cancel原因，统一按超时处理
                 return new Response<Ret>(new RpcError(RpcError.ErrTimeout,"timeout"));
-            }
-        } else {
-            if(resp.ErrCode == 0) {
-                Ret ret = new Ret();
-                RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
-                return new Response<Ret>(ret);
+            } else if (e is null) {
+                throw new Exception("resp should not be null");
             } else {
-                return new Response<Ret>(new RpcError(resp.ErrCode,resp.ErrDesc));
+                throw e;
             }
+    
+        } else if(resp.ErrCode == 0) {
+            Ret ret = new Ret();
+            RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
+            return new Response<Ret>(ret);
+        } else {
+            return new Response<Ret>(new RpcError(resp.ErrCode,resp.ErrDesc));
         }
     }
 

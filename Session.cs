@@ -24,32 +24,6 @@ public interface PacketReceiverI
 
 public class Session
 {
-
-    private class AtomicValue<T> 
-    {
-        private Mutex mtx = new Mutex();
-
-        private T? _value;
-
-        public T? Value
-        {
-            get
-            {
-                T? value;
-                mtx.WaitOne();
-                value = _value;
-                mtx.ReleaseMutex();
-                return value;
-            }
-            set
-            {
-                mtx.WaitOne();
-                _value = value;
-                mtx.ReleaseMutex();         
-            }
-        }
-    }
-
     private class StreamReader : StreamReaderI
     {
         public CancellationToken Token;
@@ -122,11 +96,9 @@ public class Session
 
     private int started = 0;
 
-    private  Mutex mtx = new Mutex();
+    private Action<Session>? closeCallback = null;
 
-    private AtomicValue<Action<Session>?> closeCallback = new AtomicValue<Action<Session>?>();
-
-    private AtomicValue<Action<Session>?> onRecvTimeout = new AtomicValue<Action<Session>?>();
+    private Action<Session>? onRecvTimeout = null;
 
     private int threadCount = 0;
 
@@ -142,7 +114,7 @@ public class Session
 
     public Session SetRecvTimeout(int recvTimeout,Action<Session>? onRecvTimeout)
     {
-        this.onRecvTimeout.Value = onRecvTimeout;
+        Interlocked.Exchange(ref this.onRecvTimeout,onRecvTimeout);
         readCancellation.Timeout = recvTimeout;
         return this;
     }
@@ -155,7 +127,7 @@ public class Session
     }
 
     public Session SetCloseCallback(Action<Session> closeCallback) {
-        this.closeCallback.Value = closeCallback;
+        Interlocked.Exchange(ref this.closeCallback,closeCallback);
         return this;
     }
 
@@ -187,7 +159,7 @@ public class Session
             if(started == 0)
             {
                 socket.Close();
-                var closeCallback = this.closeCallback.Value;
+                var closeCallback = Interlocked.Exchange(ref this.closeCallback,this.closeCallback);
                 if(!(closeCallback is null)){
                     closeCallback(this);
                 }
@@ -250,7 +222,7 @@ public class Session
 
             if(Interlocked.Add(ref threadCount,-1) == 0) {
                 socket.Close();
-                var closeCallback = this.closeCallback.Value;
+                var closeCallback = Interlocked.Exchange(ref this.closeCallback,this.closeCallback);
                 if(!(closeCallback is null)){
                     closeCallback(this);
                 }               
@@ -280,7 +252,7 @@ public class Session
                     if(closed==1) {
                         break;
                     } else {
-                        var onRecvTimeout = this.onRecvTimeout.Value;
+                        var onRecvTimeout = Interlocked.Exchange(ref this.onRecvTimeout,this.onRecvTimeout);
                         if(!(onRecvTimeout is null)){
                             onRecvTimeout(this);
                         } else {
@@ -301,7 +273,7 @@ public class Session
 
             if(Interlocked.Add(ref threadCount,-1) == 0) {
                 socket.Close();
-                var closeCallback = this.closeCallback.Value;
+                var closeCallback = Interlocked.Exchange(ref this.closeCallback,this.closeCallback);
                 if(!(closeCallback is null)){
                     closeCallback(this);
                 }                
