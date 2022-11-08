@@ -247,6 +247,8 @@ public class RpcRequestMessage : MessageI
 
     private Rpc.Proto.rpcRequest _req;  
 
+    public  Rpc.Proto.rpcRequest Req{get=>_req;}
+
     public RpcRequestMessage(LogicAddr to,LogicAddr from,Rpc.Proto.rpcRequest req)
     {
         _to = to;

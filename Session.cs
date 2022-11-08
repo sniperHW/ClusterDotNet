@@ -161,7 +161,10 @@ public class Session
                 socket.Close();
                 var closeCallback = Interlocked.Exchange(ref this.closeCallback,this.closeCallback);
                 if(!(closeCallback is null)){
-                    closeCallback(this);
+                    Task.Run(() =>
+                    {
+                        closeCallback(this);
+                    });
                 }
             }
         }

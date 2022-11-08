@@ -39,9 +39,97 @@ public class RpcCodec
 
 public interface RpcChannelI
 {
-    void SendRequest(Rpc.Proto.rpcRequest request);
+    void SendRequest(Rpc.Proto.rpcRequest request,CancellationToken cancellationToken);
     void Reply(Rpc.Proto.rpcResponse response);
+    LogicAddr Peer();
 }
+
+public class rpcChannel : RpcChannelI
+{
+    private LogicAddr _peer;
+    private Node      _node;
+    private Sanguo    _sanguo;
+
+    public rpcChannel(Sanguo sanguo,Node node,LogicAddr peer)
+    {
+        _sanguo = sanguo;
+        _node = node;
+        _peer = peer;
+    }
+
+    public void SendRequest(Rpc.Proto.rpcRequest request,CancellationToken cancellationToken)
+    {
+        _node.SendMessage(_sanguo,new RpcRequestMessage(_peer,_sanguo.LocalAddr.LogicAddr,request),null,cancellationToken);
+    }
+
+    public void Reply(Rpc.Proto.rpcResponse response)
+    {
+        CancellationTokenSource source = new CancellationTokenSource();
+        source.CancelAfter(5000);
+        _node.SendMessage(_sanguo,new RpcResponseMessage(_sanguo.LocalAddr.LogicAddr,_peer,response),null,source.Token);
+    }
+
+    public LogicAddr Peer()
+    {
+        return _peer;
+    }
+
+}
+
+
+public class selfChannel : RpcChannelI
+{
+    private Sanguo    _sanguo;
+
+    public selfChannel(Sanguo sanguo)
+    {
+        _sanguo = sanguo;
+    }
+
+    public void SendRequest(Rpc.Proto.rpcRequest request,CancellationToken cancellationToken)
+    {                    
+        Task.Run(() =>
+        {
+            _sanguo.OnRpcRequest(this,request);
+        });
+    }
+
+    public void Reply(Rpc.Proto.rpcResponse response)
+    {
+        Task.Run(() =>
+        {
+            _sanguo.OnRpcResponse(response);
+        });
+    }
+
+    public LogicAddr Peer()
+    {
+        return _sanguo.LocalAddr.LogicAddr;
+    }
+
+}
+
+
+/*
+// 自连接channel
+type selfChannel struct {
+	sanguo *Sanguo
+}
+
+func (c *selfChannel) SendRequest(request *rpcgo.RequestMsg, deadline time.Time) error {
+	c.sanguo.rpcSvr.OnMessage(context.TODO(), c, request)
+	return nil
+}
+
+func (c *selfChannel) Reply(response *rpcgo.ResponseMsg) error {
+	c.sanguo.rpcCli.OnMessage(context.TODO(), response)
+	return nil
+}
+
+func (c *selfChannel) Peer() addr.LogicAddr {
+	return c.sanguo.localAddr.LogicAddr()
+}
+*/
 
 
 public class RpcError
@@ -124,7 +212,7 @@ public class RpcClient
         request.Method = method;
         request.Arg = ByteString.CopyFrom(RpcCodec.Codec.Encode(arg));
         request.Oneway = true;
-        channel.SendRequest(request);
+        channel.SendRequest(request,cancellationToken);
     }
 
     public async Task<Response<Ret>> Call<Arg,Ret>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
@@ -145,7 +233,7 @@ public class RpcClient
 
         Rpc.Proto.rpcResponse? resp = null;
         try{
-            channel.SendRequest(request);
+            channel.SendRequest(request,cancellationToken);
             resp = await context.Wait(cancellationToken);
         }
         catch(OperationCanceledException)
