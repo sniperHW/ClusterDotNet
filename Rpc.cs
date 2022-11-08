@@ -44,161 +44,6 @@ public interface RpcChannelI
 }
 
 
-/*
-
-type Client struct {
-	nextSequence uint64
-	codec        Codec
-	pendingCall  [32]sync.Map
-}
-
-func NewClient(codec Codec) *Client {
-	return &Client{
-		codec: codec,
-	}
-}
-
-func (c *Client) OnMessage(context context.Context, resp *ResponseMsg) {
-	if ctx, ok := c.pendingCall[int(resp.Seq)%len(c.pendingCall)].LoadAndDelete(resp.Seq); ok {
-		ctx.(*callContext).stopTimer()
-		ctx.(*callContext).callOnResponse(c.codec, resp.Ret, resp.Err)
-	} else {
-		logger.Infof("onResponse with no reqContext:%d", resp.Seq)
-	}
-}
-
-func (c *Client) CallWithCallback(channel Channel, deadline time.Time, method string, arg interface{}, ret interface{}, respCb RespCB) func() bool {
-	if b, err := c.codec.Encode(arg); err != nil {
-		logger.Panicf("encode error:%v", err)
-		return nil
-	} else {
-		reqMessage := &RequestMsg{
-			Seq:    atomic.AddUint64(&c.nextSequence, 1),
-			Method: method,
-			Arg:    b,
-		}
-		if respCb == nil || ret == nil {
-			reqMessage.Oneway = true
-			if err = channel.SendRequest(reqMessage, deadline); err != nil {
-				logger.Errorf("SendRequest error:%v", err)
-			}
-			return nil
-		} else {
-
-			ctx := &callContext{
-				onResponse:   respCb,
-				respReceiver: ret,
-			}
-
-			pending := &c.pendingCall[int(reqMessage.Seq)%len(c.pendingCall)]
-
-			pending.Store(reqMessage.Seq, ctx)
-
-			ctx.deadlineTimer.Store(time.AfterFunc(deadline.Sub(time.Now()), func() {
-				if _, ok := pending.LoadAndDelete(reqMessage.Seq); ok {
-					ctx.callOnResponse(c.codec, nil, newError(ErrTimeout, "timeout"))
-				}
-			}))
-
-			if err = channel.SendRequest(reqMessage, deadline); err != nil {
-				if _, ok := pending.LoadAndDelete(reqMessage.Seq); ok {
-					ctx.stopTimer()
-					if e, ok := err.(net.Error); ok && e.Timeout() {
-						go ctx.callOnResponse(c.codec, nil, newError(ErrTimeout, "timeout"))
-					} else {
-						go ctx.callOnResponse(c.codec, nil, newError(ErrSend, err.Error()))
-					}
-				}
-				return nil
-			} else {
-				return func() bool {
-					if _, ok := pending.LoadAndDelete(reqMessage.Seq); ok {
-						ctx.stopTimer()
-						return true
-					} else {
-						return false
-					}
-				}
-			}
-		}
-	}
-}
-
-func (c *Client) Call(ctx context.Context, channel Channel, method string, arg interface{}, ret interface{}) error {
-	if b, err := c.codec.Encode(arg); err != nil {
-		logger.Panicf("encode error:%v", err)
-		return nil
-	} else {
-		reqMessage := &RequestMsg{
-			Seq:    atomic.AddUint64(&c.nextSequence, 1),
-			Method: method,
-			Arg:    b,
-		}
-		if ret != nil {
-			waitC := make(chan error, 1)
-			pending := &c.pendingCall[int(reqMessage.Seq)%len(c.pendingCall)]
-
-			pending.Store(reqMessage.Seq, &callContext{
-				respReceiver: ret,
-				onResponse: func(_ interface{}, err error) {
-					waitC <- err
-				},
-			})
-
-			if err = channel.SendRequestWithContext(ctx, reqMessage); err != nil {
-				pending.Delete(reqMessage.Seq)
-				if e, ok := err.(net.Error); ok && e.Timeout() {
-					return newError(ErrTimeout, "timeout")
-				} else {
-					return newError(ErrSend, err.Error())
-				}
-			}
-
-			select {
-			case err := <-waitC:
-				return err
-			case <-ctx.Done():
-				pending.Delete(reqMessage.Seq)
-				switch ctx.Err() {
-				case context.Canceled:
-					return newError(ErrCancel, "canceled")
-				case context.DeadlineExceeded:
-					return newError(ErrTimeout, "timeout")
-				default:
-					return newError(ErrOther, "unknow")
-				}
-			}
-		} else {
-			reqMessage.Oneway = true
-			if err = channel.SendRequestWithContext(ctx, reqMessage); nil != err {
-				if e, ok := err.(net.Error); ok && e.Timeout() {
-					return newError(ErrTimeout, "timeout")
-				} else {
-					return newError(ErrSend, err.Error())
-				}
-			} else {
-				return nil
-			}
-		}
-	}
-}
-
-type callContext struct {
-	onResponse    RespCB
-	deadlineTimer atomic.Value
-	fired         int32
-	respReceiver  interface{}
-}
-
-
-	nextSequence uint64
-	codec        Codec
-	pendingCall  [32]sync.Map
-
-
-
-*/
-
 public class RpcError
 {
 
@@ -348,7 +193,125 @@ public class RpcClient
     }
 }
 
-//public class RpcServer
-//{
+public class RpcServer
+{
+    public class Replyer<Ret> where Ret : IMessage<Ret>
+    {
+        private RpcChannelI _channel;
+        public RpcChannelI Channel{get=>_channel;}
+        private ulong       _seq;
+        private int         _replied = 0;
+        private bool        _oneway;
 
-//}
+        public Replyer(RpcChannelI channel,ulong seq,bool oneway)
+        {
+            _channel = channel;
+            _seq = seq;
+            _oneway = oneway;
+        }
+
+        public void Reply(Ret ret)
+        {
+            if(!_oneway && Interlocked.CompareExchange(ref _replied,1,0) == 0)
+            {
+                Rpc.Proto.rpcResponse response = new Rpc.Proto.rpcResponse();
+
+                response.Seq = _seq;
+
+                response.Ret = ByteString.CopyFrom(RpcCodec.Codec.Encode(ret));
+
+                _channel.Reply(response);
+            }
+        }
+
+        public void Reply(RpcError error)
+        {
+            if(!_oneway && Interlocked.CompareExchange(ref _replied,1,0) == 0)
+            {
+                Rpc.Proto.rpcResponse response = new Rpc.Proto.rpcResponse();
+
+                response.Seq = _seq;
+
+                response.ErrCode = error.Code;
+
+                response.ErrDesc = error.Desc;
+
+                _channel.Reply(response);
+
+            }
+        }
+    }
+
+    private Mutex mtx = new Mutex();
+
+    private Dictionary<string,Action<RpcChannelI,Rpc.Proto.rpcRequest>> methods = new Dictionary<string,Action<RpcChannelI,Rpc.Proto.rpcRequest>>();
+
+    private int pause = 0;
+
+    public void Pause()
+    {
+        Interlocked.CompareExchange(ref pause,1,0);
+    }
+
+    public void Resume()
+    {
+        Interlocked.CompareExchange(ref pause,0,1);
+    }
+
+    public void Register<Arg,Ret>(string method,Action<Replyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
+    {
+
+        mtx.WaitOne();
+        if(methods.ContainsKey(method))
+        {   
+            mtx.ReleaseMutex();
+            throw new Exception("duplicate method");
+        }
+
+        methods[method] = (RpcChannelI channel,Rpc.Proto.rpcRequest req) =>
+        {
+            try{
+                Arg arg = new Arg();
+                RpcCodec.Codec.Decode(req.Arg.ToByteArray(),arg);
+                Replyer<Ret> replyer = new Replyer<Ret>(channel,req.Seq,req.Oneway);
+                serviceFunc(replyer,arg);
+            }catch(Exception e)
+            {
+                Console.WriteLine(e);
+                if(!req.Oneway){
+                    Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
+                    resp.Seq = req.Seq;
+                    resp.ErrCode = RpcError.ErrMethod;
+                    resp.ErrDesc = e.ToString();
+                    channel.Reply(resp);
+                }    
+            }
+        };
+        mtx.ReleaseMutex();
+    }
+
+    public void OnMessage(RpcChannelI channel,Rpc.Proto.rpcRequest req)
+    {
+        Action<RpcChannelI,Rpc.Proto.rpcRequest>? serviceFunc;
+        mtx.WaitOne();
+        serviceFunc = methods[req.Method];
+        mtx.ReleaseMutex();
+        if(serviceFunc is null){
+            Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
+            resp.Seq = req.Seq;
+            resp.ErrCode = RpcError.ErrMethod;
+            resp.ErrDesc = "invaild method";
+            channel.Reply(resp);
+        } 
+        else if (pause == 1)
+        {
+            Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
+            resp.Seq = req.Seq;
+            resp.ErrCode = RpcError.ErrServerPause;
+            resp.ErrDesc = "server pause";
+            channel.Reply(resp);            
+        } else {
+            serviceFunc(channel,req);
+        }
+    }
+}
