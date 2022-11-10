@@ -41,6 +41,23 @@ public class Sanguo
 
     private MsgManager msgManager = new MsgManager();
 
+    public Node? GetNodeByLogicAddr(LogicAddr addr) 
+    {
+        if(addr.Cluster() == _localAddr.LogicAddr.Cluster()) 
+        {
+            //同一cluster
+            return nodeCache.GetNodeByLogicAddr(addr);
+        } else {
+            //不同cluster,获取本cluster内的harbor
+            if(_localAddr.LogicAddr.Type() == LogicAddr.HarbarType) {
+                //当前节点为harbor,从harbor集群中获取与addr在同一个cluster的harbor节点
+                return nodeCache.GetHarborByCluster(addr.Cluster(),addr);
+            } else {
+                //当前节点非harbor,获取集群中的harbor节点
+                return nodeCache.GetHarborByCluster(_localAddr.LogicAddr.Cluster(),addr); 
+            }
+        }
+    }
 
     public void RegisterMsg<T>(ushort cmd,Action<LogicAddr,T> func) where T : IMessage<T>
     {

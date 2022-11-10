@@ -110,28 +110,6 @@ public class selfChannel : RpcChannelI
 }
 
 
-/*
-// 自连接channel
-type selfChannel struct {
-	sanguo *Sanguo
-}
-
-func (c *selfChannel) SendRequest(request *rpcgo.RequestMsg, deadline time.Time) error {
-	c.sanguo.rpcSvr.OnMessage(context.TODO(), c, request)
-	return nil
-}
-
-func (c *selfChannel) Reply(response *rpcgo.ResponseMsg) error {
-	c.sanguo.rpcCli.OnMessage(context.TODO(), response)
-	return nil
-}
-
-func (c *selfChannel) Peer() addr.LogicAddr {
-	return c.sanguo.localAddr.LogicAddr()
-}
-*/
-
-
 public class RpcError
 {
 

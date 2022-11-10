@@ -120,7 +120,7 @@ public class MessageConstont
 	public static  readonly int RpcReq          = 0x10; 
 	public static  readonly int RpcResp         = 0x18; 
 	public static  readonly int MaskMessageType = 0x38;
-	public static  readonly int MaxPacketSize   = 1024 * 4;
+	public static  readonly int MaxPacketSize   = 1024 * 1024 * 4;
 
 }
 
@@ -330,7 +330,7 @@ public interface MessageCodecI
     public Object? Decode(byte[] buff,int offset,int length);
 }
 
-public class SSMessageCodec
+public class SSMessageCodec : MessageCodecI
 {
 
     private uint localLogicAddr;

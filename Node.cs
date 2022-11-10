@@ -432,25 +432,92 @@ public class Node
         }
     }
 
+    private void onRelayMessage(Sanguo sanguo,RelayMessage msg)
+    {
+        Console.WriteLine($"onRelayMessage self:{sanguo.LocalAddr.LogicAddr.ToString()} {msg.From.ToString()}->{msg.To.ToString()}");
+        var nextNode = sanguo.GetNodeByLogicAddr(msg.To);
+        if(!(nextNode is null)) {
+            nextNode.SendMessage(sanguo,msg,DateTime.Now.AddSeconds(1),null);
+        } else {
+            var rpcReq = msg.GetRpcRequest();
+            //目标不可达，如果消息是RPC请求，向请求端返回不可达错误
+            if(!(rpcReq is null) && !rpcReq.Oneway){
+                nextNode = sanguo.GetNodeByLogicAddr(msg.From);
+                if(!(nextNode is null)) {
+                    var resp = new Rpc.Proto.rpcResponse();
+                    resp.ErrCode = RpcError.ErrOther;
+                    resp.ErrDesc = $"route message to target:{msg.To.ToString()} failed";
+                    nextNode.SendMessage(sanguo,new RpcResponseMessage(msg.From,sanguo.LocalAddr.LogicAddr,resp),DateTime.Now.AddSeconds(1),null);
+                }
+            }
+        }
+    }
+
     private void onMessage(Sanguo sanguo,MessageI m)
     {
+        if(m is SSMessage) {
+            sanguo.DispatchMsg((SSMessage)m);
+        } else if (m is RpcRequestMessage) {
+            var request = (RpcRequestMessage)m;
+            sanguo.OnRpcRequest(new rpcChannel(sanguo,this,request.From),request.Req);
+        } else if (m is RpcResponseMessage) {
+            sanguo.OnRpcResponse(((RpcResponseMessage)m).Resp);
+        } else if (m is RelayMessage) {
+            onRelayMessage(sanguo,(RelayMessage)m);
+        }
+    }
 
+    private void onEstablish(Sanguo sanguo,Socket s) 
+    {
+        var msgReveiver = new MessageReceiver(MessageConstont.MaxPacketSize,new SSMessageCodec(sanguo.LocalAddr.LogicAddr.ToUint32()));
+        session = new Session(s);
+        session.SetCloseCallback((Session s) => {
+            mtx.WaitOne();
+            session = null;
+            mtx.ReleaseMutex();
+        });
+        session.Start(msgReveiver,(Session s,Object packet) => {
+            if(packet is MessageI) {
+                onMessage(sanguo,(MessageI)packet);
+                return true;
+            } else {
+                return false;
+            }
+        });
+        var now = DateTime.Now;
+        for(var node = pendingMsg.First; node != null; node = pendingMsg.First){
+            pendingMsg.Remove(node);
+            var pending = node.Value;
+            if(!(pending.deadline is null) && pending.deadline < now) {
+                session.Send(pending.message);
+            } else if (!(pending.cancellationToken is null)){
+                CancellationToken token = (CancellationToken)pending.cancellationToken;
+                if(!token.IsCancellationRequested){
+                    session.Send(pending.message);
+                }
+            }
+        }
     } 
-    
-    /*func (n *node) onMessage(sanguo *Sanguo, msg interface{}) {
-	switch msg := msg.(type) {
-	case *ss.Message:
-		switch m := msg.Payload().(type) {
-		case proto.Message:
-			sanguo.dispatchMessage(msg.From(), msg.Cmd(), m)
-		case *rpcgo.RequestMsg:
-			sanguo.rpcSvr.OnMessage(context.TODO(), &rpcChannel{peer: msg.From(), node: n, sanguo: sanguo}, m)
-		case *rpcgo.ResponseMsg:
-			sanguo.rpcCli.OnMessage(context.TODO(), m)
+
+    /*
+    func (n *node) onEstablish(sanguo *Sanguo, conn net.Conn) {
+	now := time.Now()
+	for e := n.pendingMsg.Front(); e != nil; e = n.pendingMsg.Front() {
+		msg := n.pendingMsg.Remove(e).(*pendingMessage)
+		if !msg.deadline.IsZero() {
+			if now.Before(msg.deadline) {
+				n.socket.Send(msg.message, msg.deadline)
+			}
+		} else if msg.ctx != nil {
+			select {
+			case <-msg.ctx.Done():
+			default:
+				n.socket.SendWithContext(msg.ctx, msg.message)
+			}
 		}
-	case *ss.RelayMessage:
-		n.onRelayMessage(sanguo, msg)
 	}
-}*/
+    }
+    */
+
 
 }
