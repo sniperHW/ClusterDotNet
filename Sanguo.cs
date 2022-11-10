@@ -8,6 +8,23 @@ using System.Threading;
 using Google.Protobuf;
 namespace SanguoDotNet;
 
+
+public class SSLoginReq {
+	private uint _logicAddr;
+    public uint LogicAddr{get=>_logicAddr;}
+	private string _netAddr;
+    public string NetAddr{get=>_netAddr;}
+    private bool _isStream;
+    public bool IsStream{get=>_isStream;}
+
+
+    public SSLoginReq(uint logicAddr,string netAddr,bool isStream){
+        _logicAddr = logicAddr;
+        _netAddr = netAddr;
+        _isStream = isStream;
+    }
+}
+
 public class Sanguo
 {
     private class MsgManager 
@@ -38,8 +55,13 @@ public class Sanguo
     private NodeCache nodeCache;
     private RpcClient rpcCli = new RpcClient();
     private RpcServer rpcSvr = new RpcServer();
-
     private MsgManager msgManager = new MsgManager();
+
+    private bool _die = false;
+    public  bool Die{get=>_die;}
+
+    public  static byte[] SecretKey = Encoding.ASCII.GetBytes("sanguo_2022");
+    
 
     public Node? GetNodeByLogicAddr(LogicAddr addr) 
     {

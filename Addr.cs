@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Threading;
+using System.Net;
 namespace SanguoDotNet;
 
 
@@ -39,6 +40,15 @@ public class Addr
         mtx = new Mutex();
         _logicAddr= new(logicAddr);
         _netAddr = netAddr;
+    }
+
+    public IPEndPoint IPEndPoint()
+    {
+        var r = NetAddr.Split(':');
+        if(r.Length != 2) {
+            throw new Exception("invaild netaddr");
+        }
+        return new IPEndPoint(IPAddress.Parse(r[0]),Convert.ToInt32(r[2]));
     }
 
 }

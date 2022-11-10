@@ -7,6 +7,7 @@ using System.Text;
 using System.Threading;
 using System.Collections;
 using System.Collections.Generic;
+using System.Text.Json;
 namespace SanguoDotNet;
 
 public class DiscoveryNode
@@ -401,11 +402,100 @@ public class Node
             session = null;
         }
         mtx.ReleaseMutex();
+    }   
+
+    //清理已经超时或被取消的pendingMsg,返回pendingMsg中是否还有
+    private void clearPendingMsg() 
+    {
+        var now = DateTime.Now;
+        for(var node = pendingMsg.First;node != null;)
+        {
+            var msg = node.Value;
+            if( msg.deadline != null && msg.deadline >= now) {
+                //已经超时
+                var next = node.Next;
+                pendingMsg.Remove(node);
+                node = next;
+            } else if(msg.cancellationToken != null){
+                CancellationToken token = (CancellationToken)msg.cancellationToken;
+                if(token.IsCancellationRequested){
+                    var next = node.Next;
+                    pendingMsg.Remove(node);
+                    node = next; 
+                }
+            } else {
+                node = node.Next;
+            }
+        }
     }
+
+    private async Task<bool> connectAndLogin(Sanguo sanguo,Socket s,bool isStream)
+    {
+        var cancellation = new CancellationTokenSource();
+        cancellation.CancelAfter(5000);
+        try{
+            await s.ConnectAsync(Addr.IPEndPoint(),cancellation.Token);
+            var jsonStream = new MemoryStream();
+            JsonSerializer.Serialize(jsonStream,new SSLoginReq(sanguo.LocalAddr.LogicAddr.ToUint32(),sanguo.LocalAddr.NetAddr,isStream) ,typeof(SSLoginReq));
+
+            var encryptJson = AES.CbcEncrypt(Sanguo.SecretKey,jsonStream.ToArray());
+            var mstream = new MemoryStream(new byte[4+encryptJson.Length]);
+            mstream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(encryptJson.Length)));
+            mstream.Write(encryptJson);
+            var data = mstream.ToArray();
+            
+            using NetworkStream nstream = new(s, ownsSocket: false);
+
+            await nstream.WriteAsync(data,0,data.Length,cancellation.Token);
+            var resp = new byte[4];    
+            var n = await nstream.ReadAsync(resp,0,resp.Length,cancellation.Token);
+            if(n <= 0) {
+                return false;
+            } else {
+                return true;
+            }
+        } 
+        catch(Exception)
+        {
+            return false;
+        }
+    } 
+
+
 
     private void dial(Sanguo sanguo)
     {
-
+        Task.Run(async () => {
+            for(;;){
+                if(sanguo.Die){
+                    return;
+                }
+                Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                var ok = await connectAndLogin(sanguo,s,false);
+                if(ok) {
+                    if(sanguo.Die) {
+                        s.Close();
+                    } else {
+                        mtx.WaitOne();
+                        dialing = false;
+                        onEstablish(sanguo,s);
+                        mtx.ReleaseMutex();
+                    }
+                    return;
+                } else {
+                    mtx.WaitOne();
+                    clearPendingMsg();
+                    if(pendingMsg.Count == 0) {
+                        dialing = false;
+                        mtx.ReleaseMutex();
+                        return;
+                    } else {
+                        mtx.ReleaseMutex();
+                        continue;
+                    }                    
+                }
+            }
+        });         
     }
 
     public void SendMessage(Sanguo sanguo,MessageI msg,DateTime? deadline,CancellationToken? cancellationToken)
@@ -498,26 +588,4 @@ public class Node
             }
         }
     } 
-
-    /*
-    func (n *node) onEstablish(sanguo *Sanguo, conn net.Conn) {
-	now := time.Now()
-	for e := n.pendingMsg.Front(); e != nil; e = n.pendingMsg.Front() {
-		msg := n.pendingMsg.Remove(e).(*pendingMessage)
-		if !msg.deadline.IsZero() {
-			if now.Before(msg.deadline) {
-				n.socket.Send(msg.message, msg.deadline)
-			}
-		} else if msg.ctx != nil {
-			select {
-			case <-msg.ctx.Done():
-			default:
-				n.socket.SendWithContext(msg.ctx, msg.message)
-			}
-		}
-	}
-    }
-    */
-
-
 }
