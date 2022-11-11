@@ -244,12 +244,10 @@ public class Session
                 reader.Token = readCancellation.ResetToken();
                 try{
                     var packet = await receiver.Recv(reader);
-                    if(packet is null)
+                    if(packet is null || !packetCallback(this,packet))
                     {
                         break;
-                    } else if(!packetCallback(this,packet)){
-                        break;
-                    }                    
+                    }                   
                 }
                 catch(OperationCanceledException)
                 {
