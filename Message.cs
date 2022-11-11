@@ -147,17 +147,17 @@ public class SSMessage : MessageI
             stream.WriteByte(flag);
             stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
             stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32())));
-            stream.Write(BitConverter.GetBytes((UInt16)IPAddress.HostToNetworkOrder((int)_cmd)));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)_cmd)));
             var position2 = stream.Position;
             ProtoMessage.Marshal("ss",_payload,stream);
-            var pbSize = stream.Position - position2;
+            int pbSize = (int)(stream.Position - position2);
             var position3 = stream.Position;
-            stream.Position = position1;
-            var sizePayload = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + MessageConstont.SizeCmd;
-            if(sizePayload+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
+            var payload = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + MessageConstont.SizeCmd + pbSize;
+            if(payload+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
                 throw new Exception("packet too large");
-            }   
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(sizePayload)));
+            }
+            stream.Position = position1;   
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(18)));
             stream.Position = position3;
         } catch (Exception e) {
             Console.WriteLine(e);
@@ -353,7 +353,7 @@ public class SSMessageCodec : MessageCodecI
         offset += MessageConstont.SizeLogicAddr;
         uint from = (uint)IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buff, offset));
         offset += MessageConstont.SizeLogicAddr;
-        
+
         var msgType = (int)flag & MessageConstont.MaskMessageType;
 
         if(to != localLogicAddr) {
@@ -365,7 +365,7 @@ public class SSMessageCodec : MessageCodecI
             if(buff.Length - offset < MessageConstont.SizeCmd) {
                 throw new SystemException("invaild Message");
             }
-            var cmd = IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buff, offset));
+            var cmd = IPAddress.NetworkToHostOrder((short)BitConverter.ToUInt16(buff, offset));
             offset += MessageConstont.SizeCmd;
             var msg = ProtoMessage.Unmarshal("ss",cmd,buff,offset,endOffset-offset);
             return new SSMessage(new LogicAddr(to),new LogicAddr(from),(ushort)cmd,msg);
@@ -415,6 +415,7 @@ public class MessageReceiver: PacketReceiverI
             {
                 int payload =  IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buff, r));
                 int totalSize = payload+MessageConstont.SizeLen;
+
                 if(payload <= 0)
                 {
                     throw new SystemException("invaild payload");

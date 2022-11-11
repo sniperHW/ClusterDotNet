@@ -66,7 +66,7 @@ public class rpcChannel : RpcChannelI
     {
         CancellationTokenSource source = new CancellationTokenSource();
         source.CancelAfter(5000);
-        _node.SendMessage(_sanguo,new RpcResponseMessage(_sanguo.LocalAddr.LogicAddr,_peer,response),null,source.Token);
+        _node.SendMessage(_sanguo,new RpcResponseMessage(_peer,_sanguo.LocalAddr.LogicAddr,response),null,source.Token);
     }
 
     public LogicAddr Peer()
@@ -162,7 +162,7 @@ public class RpcClient
     {
         private Rpc.Proto.rpcResponse? response = null;
 
-        private SemaphoreSlim semaphore = new SemaphoreSlim(1);
+        private SemaphoreSlim semaphore = new SemaphoreSlim(0);
 
         public async Task<Rpc.Proto.rpcResponse?>  Wait(CancellationToken cancellationToken)
         {
@@ -183,17 +183,18 @@ public class RpcClient
 
     private Dictionary<ulong,callContext> pendingCall = new Dictionary<ulong,callContext>();
 
-    public void Call<Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg>
+    public void Call<Arg>(RpcChannelI channel,string method,Arg arg) where Arg : IMessage<Arg>
     {
         Rpc.Proto.rpcRequest request = new Rpc.Proto.rpcRequest();
         request.Seq = Interlocked.Add(ref nextSeqno,1);
         request.Method = method;
         request.Arg = ByteString.CopyFrom(RpcCodec.Codec.Encode(arg));
         request.Oneway = true;
-        channel.SendRequest(request,cancellationToken);
+        CancellationTokenSource cancel = new CancellationTokenSource();
+        channel.SendRequest(request,cancel.Token);
     }
 
-    public async Task<Response<Ret>> Call<Arg,Ret>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    public async Task<Response<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         Rpc.Proto.rpcRequest request = new Rpc.Proto.rpcRequest();
         request.Seq = Interlocked.Add(ref nextSeqno,1);
@@ -248,13 +249,14 @@ public class RpcClient
     public void OnMessage(Rpc.Proto.rpcResponse respMsg)
     {
         mtx.WaitOne();
-        callContext? ctx = pendingCall[respMsg.Seq];
-        if(!(ctx is null)){
+        if(pendingCall.ContainsKey(respMsg.Seq)) {
+            callContext ctx = pendingCall[respMsg.Seq];
             pendingCall.Remove(respMsg.Seq);
             mtx.ReleaseMutex();
             ctx.Wakeup(respMsg);
         } else {
             mtx.ReleaseMutex();
+            Console.WriteLine($"got response but not context seqno:{respMsg.Seq}");
         }
     }
 }

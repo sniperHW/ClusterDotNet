@@ -68,7 +68,7 @@ public class AES {
         return stream.ToArray();
     }
 
-    static public byte[]CbcDecrypter(byte[] keybyte, byte[] plainbyte)
+    static public byte[]CbcDecrypt(byte[] keybyte, byte[] plainbyte)
     {
 
         keybyte = fixKey(keybyte);

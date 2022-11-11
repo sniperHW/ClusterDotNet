@@ -9,10 +9,7 @@ public class Addr
     private  Mutex mtx;
     private  LogicAddr _logicAddr;
     private  string _netAddr;
-    public LogicAddr LogicAddr
-    {
-        get => _logicAddr;
-    }
+    public LogicAddr LogicAddr{get => _logicAddr;}
 
     public string NetAddr
     {
@@ -48,7 +45,7 @@ public class Addr
         if(r.Length != 2) {
             throw new Exception("invaild netaddr");
         }
-        return new IPEndPoint(IPAddress.Parse(r[0]),Convert.ToInt32(r[2]));
+        return new IPEndPoint(IPAddress.Parse(r[0]),Convert.ToInt32(r[1]));
     }
 
 }
@@ -79,6 +76,26 @@ public class LogicAddr
 
     override public string ToString(){
         return $"{Cluster()}.{Type()}.{Server()}";
+    }
+
+    public override bool Equals(object? obj)
+    {
+        if(obj is null) {
+            return false;
+        }
+
+        if(!(obj is LogicAddr)){
+            return false;
+        }
+
+        var other = (LogicAddr)obj;
+
+        return _addr == other._addr;
+    }
+
+    public override int GetHashCode() 
+    {
+        return base.GetHashCode();
     }
 
     public LogicAddr(uint addr)
