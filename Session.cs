@@ -26,7 +26,10 @@ public class Session
 {
     private class StreamReader : StreamReaderI
     {
-        public CancellationToken Token;
+        public  int Timeout = 0;
+
+        private CancellationTokenSource token = new CancellationTokenSource();
+
         private NetworkStream stream;
 
         public StreamReader(NetworkStream stream)
@@ -36,61 +39,24 @@ public class Session
 
         public Task<int> Recv(byte[] buff, int offset, int count) 
         {
-            return stream.ReadAsync(buff, offset, count, Token);
-        }
-    }
-
-    private class Cancellation
-    {
-        private Mutex mtx = new Mutex();
-
-        private CancellationTokenSource token = new CancellationTokenSource(); 
-        
-        public  int Timeout = 0;
-
-        private bool canceled = false;
-
-        public void Cancel()
-        {
-            mtx.WaitOne();
-            canceled = true;
-            token.Cancel();
-            mtx.ReleaseMutex();
-        }
-
-        public System.Threading.CancellationToken ResetToken()
-        {
-
-            System.Threading.CancellationToken tk;
-
-            mtx.WaitOne();
-
-            if(!canceled){
+            if(Timeout > 0) {
                 if(!token.TryReset())
                 {
                     token = new CancellationTokenSource();
                 }
-                if(Timeout>0)
-                {
-                    token.CancelAfter(Timeout);
-                }
+                token.CancelAfter(Timeout);
+                return stream.ReadAsync(buff, offset, count,token.Token);
+            } else {
+                return stream.ReadAsync(buff, offset, count);
             }
-
-            tk = token.Token;
-
-            mtx.ReleaseMutex();
-
-            return tk;
         }
     }
+
+    private NetworkStream stream;
 
     private Socket socket;
 
     private BufferBlock<MessageI?> sendList = new BufferBlock<MessageI?>();
-
-    private Cancellation readCancellation  = new Cancellation();
-
-    private Cancellation writeCancellation = new Cancellation();
 
     private int closed = 0;
 
@@ -100,29 +66,34 @@ public class Session
 
     private Action<Session>? onRecvTimeout = null;
 
+    private int recvTimeout;
+
+    private int sendTimeout;
+
     private int threadCount = 0;
 
     public Session(Socket s)
     {
         socket = s;
+        stream = new NetworkStream(s,ownsSocket: true);
     }
 
     ~Session()
     {
-        socket.Close();
+        stream.Dispose();
     }
 
     public Session SetRecvTimeout(int recvTimeout,Action<Session>? onRecvTimeout)
     {
         Interlocked.Exchange(ref this.onRecvTimeout,onRecvTimeout);
-        readCancellation.Timeout = recvTimeout;
+        this.recvTimeout = recvTimeout;
         return this;
     }
 
 
     public Session SetSendTimeout(int sendTimeout)
     {
-        writeCancellation.Timeout = sendTimeout;
+        this.sendTimeout = sendTimeout;
         return this;
     }
 
@@ -155,10 +126,10 @@ public class Session
     {
         if(0 == Interlocked.CompareExchange(ref closed,1,0)){
             sendList.Post(null);
-            readCancellation.Cancel();
+            socket.Shutdown(SocketShutdown.Receive);
             if(started == 0)
             {
-                socket.Close();
+                stream.Dispose();
                 var closeCallback = Interlocked.Exchange(ref this.closeCallback,this.closeCallback);
                 if(!(closeCallback is null)){
                     Task.Run(() =>
@@ -175,9 +146,9 @@ public class Session
         Task.Run(async () =>
         {
             const int maxSendSize = 65535;
-            using NetworkStream writer = new(socket, ownsSocket: true);
             MemoryStream memoryStream = new MemoryStream();
             bool finish = false;
+            CancellationTokenSource token = new CancellationTokenSource();
             for(;!finish;){
                 try{
                     var msg = await sendList.ReceiveAsync();
@@ -199,8 +170,16 @@ public class Session
                         }
                         if(memoryStream.Length > 0) {
                             var data = memoryStream.ToArray();
-                            await writer.WriteAsync(data, 0, data.Length,writeCancellation.ResetToken());
-                            await writer.FlushAsync(writeCancellation.ResetToken());
+                            if(sendTimeout > 0) {
+                                if(!token.TryReset())
+                                {
+                                    token = new CancellationTokenSource();
+                                }
+                                token.CancelAfter(sendTimeout);
+                                await stream.WriteAsync(data, 0, data.Length,token.Token);
+                            } else {
+                                await stream.WriteAsync(data, 0, data.Length);
+                            }    
                             memoryStream.Position = 0;
                             memoryStream.SetLength(0);
                         }
@@ -220,12 +199,11 @@ public class Session
             memoryStream.Dispose();
 
             if(0 == Interlocked.CompareExchange(ref closed,1,0)){
-                readCancellation.Cancel();    
+                socket.Shutdown(SocketShutdown.Receive);   
             }
 
-
             if(Interlocked.Add(ref threadCount,-1) == 0) {
-                socket.Close();
+                stream.Dispose();
                 var closeCallback = Interlocked.Exchange(ref this.closeCallback,this.closeCallback);
                 if(!(closeCallback is null)){
                     closeCallback(this);
@@ -238,10 +216,9 @@ public class Session
     {
         Task.Run(async () =>
         {
-            using NetworkStream stream = new(socket, ownsSocket: true);
             var reader = new StreamReader(stream);
             for(;closed==0;) {
-                reader.Token = readCancellation.ResetToken();
+                reader.Timeout = recvTimeout;
                 try{
                     var packet = await receiver.Recv(reader);
                     if(packet is null || !packetCallback(this,packet))
@@ -251,16 +228,12 @@ public class Session
                 }
                 catch(OperationCanceledException)
                 {
-                    if(closed==1) {
-                        break;
+                    var onRecvTimeout = Interlocked.Exchange(ref this.onRecvTimeout,this.onRecvTimeout);
+                    if(!(onRecvTimeout is null)){
+                        onRecvTimeout(this);
                     } else {
-                        var onRecvTimeout = Interlocked.Exchange(ref this.onRecvTimeout,this.onRecvTimeout);
-                        if(!(onRecvTimeout is null)){
-                            onRecvTimeout(this);
-                        } else {
-                            break;
-                        }
-                    }                    
+                        break;
+                    }                           
                 }
                 catch(Exception e)
                 {
@@ -274,7 +247,7 @@ public class Session
             }
 
             if(Interlocked.Add(ref threadCount,-1) == 0) {
-                socket.Close();
+                stream.Dispose();
                 var closeCallback = Interlocked.Exchange(ref this.closeCallback,this.closeCallback);
                 if(!(closeCallback is null)){
                     closeCallback(this);
