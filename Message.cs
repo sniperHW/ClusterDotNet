@@ -39,7 +39,7 @@ public class ProtoMessage
 
             Func<IMessage> factory = idToMeta[id];
             IMessage o = factory();
-            MemoryStream memoryStream = new MemoryStream(buff, offset, length);
+            using MemoryStream memoryStream = new MemoryStream(buff, offset, length);
             o.MergeFrom(memoryStream); 
             return o;
         }
@@ -258,24 +258,27 @@ public class RpcRequestMessage : MessageI
 
     public void Encode(MemoryStream stream)
     {
-        var position1 = stream.Position;
+        var oriPos = stream.Position;
+        var oriLength = stream.Length;
         try{
-            MemoryStream tmpstream = new MemoryStream();
-            _req.WriteTo(tmpstream);
-            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)tmpstream.Length;
-			var totalLen = MessageConstont.SizeLen + payloadLen;
+            stream.Write(BitConverter.GetBytes(0));//占位符
+            stream.WriteByte((byte)(0 | MessageConstont.RpcReq));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32()))); 
+            var pos2 = stream.Position;
+            _req.WriteTo(stream);
+            var pos3 = stream.Position;
+            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
             if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
                 throw new Exception("packet too large");
             }
+            stream.Position = oriPos;
             stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payloadLen)));
-            byte flag = (byte)(0 | MessageConstont.RpcReq);
-            stream.WriteByte(flag);
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32()))); 
-            stream.Write(tmpstream.ToArray());   
+            stream.Position = pos3;
         }  catch (Exception e) {
             Console.WriteLine(e);
-            stream.Position = position1;
+            stream.Position = oriPos;
+            stream.SetLength(oriPos);
         }
     }
 }
@@ -302,24 +305,27 @@ public class RpcResponseMessage : MessageI
 
     public void Encode(MemoryStream stream)
     {
-        var position1 = stream.Position;
+        var oriPos = stream.Position;
+        var oriLength = stream.Length;
         try{
-            MemoryStream tmpstream = new MemoryStream();
-            _resp.WriteTo(tmpstream);
-            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)tmpstream.Length;
-			var totalLen = MessageConstont.SizeLen + payloadLen;
+            stream.Write(BitConverter.GetBytes(0));//占位符
+            stream.WriteByte((byte)(0 | MessageConstont.RpcResp));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32()))); 
+            var pos2 = stream.Position;
+            _resp.WriteTo(stream);
+            var pos3 = stream.Position;
+            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
             if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
                 throw new Exception("packet too large");
             }
+            stream.Position = oriPos;
             stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payloadLen)));
-            byte flag = (byte)(0 | MessageConstont.RpcResp);
-            stream.WriteByte(flag);
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32()))); 
-            stream.Write(tmpstream.ToArray());   
+            stream.Position = pos3;
         }  catch (Exception e) {
             Console.WriteLine(e);
-            stream.Position = position1;
+            stream.Position = oriPos;
+            stream.SetLength(oriPos);
         }
     }
 }
@@ -342,43 +348,41 @@ public class SSMessageCodec : MessageCodecI
 
     public Object? Decode(byte[] buff,int offset,int length)
     {
-        var backOffset = offset;
-        var endOffset = offset + length;
+        var readpos = offset;
+        var endpos = offset + length;
         if(length<MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom) {
             throw new SystemException("invaild Message");
         }
-        byte flag = buff[offset];
-        offset += MessageConstont.SizeFlag;
-        uint to = (uint)IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buff, offset));
-        offset += MessageConstont.SizeLogicAddr;
-        uint from = (uint)IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buff, offset));
-        offset += MessageConstont.SizeLogicAddr;
+        byte flag = buff[readpos];
+        readpos += MessageConstont.SizeFlag;
+        var to = new LogicAddr((uint)IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buff, readpos)));
+        readpos += MessageConstont.SizeLogicAddr;
+        var from = new LogicAddr((uint)IPAddress.NetworkToHostOrder(BitConverter.ToInt32(buff, readpos)));
+        readpos += MessageConstont.SizeLogicAddr;
 
         var msgType = (int)flag & MessageConstont.MaskMessageType;
 
-        if(to != localLogicAddr) {
+        if(to.ToUint32() != localLogicAddr) {
             //当前节点非目的地
-            byte[] payload = new byte[length];
-            Buffer.BlockCopy(buff,backOffset,payload,0,length);
-            return new RelayMessage(new LogicAddr(to),new LogicAddr(from),payload);
+            return new RelayMessage(to,from,new Span<byte>(buff,offset,length).ToArray());
         } else if(msgType == MessageConstont.Msg) {
-            if(buff.Length - offset < MessageConstont.SizeCmd) {
+            if(buff.Length - readpos < MessageConstont.SizeCmd) {
                 throw new SystemException("invaild Message");
             }
-            var cmd = IPAddress.NetworkToHostOrder((short)BitConverter.ToUInt16(buff, offset));
-            offset += MessageConstont.SizeCmd;
-            var msg = ProtoMessage.Unmarshal("ss",cmd,buff,offset,endOffset-offset);
-            return new SSMessage(new LogicAddr(to),new LogicAddr(from),(ushort)cmd,msg);
+            var cmd = IPAddress.NetworkToHostOrder((short)BitConverter.ToUInt16(buff, readpos));
+            readpos += MessageConstont.SizeCmd;
+            var msg = ProtoMessage.Unmarshal("ss",cmd,buff,readpos,endpos-readpos);
+            return new SSMessage(to,from,(ushort)cmd,msg);
         } else if (msgType == MessageConstont.RpcReq) {
-            MemoryStream memoryStream = new MemoryStream(buff, offset, endOffset - offset);
+            MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
             Rpc.Proto.rpcRequest req = new Rpc.Proto.rpcRequest();
             req.MergeFrom(memoryStream); 
-            return new RpcRequestMessage(new LogicAddr(to),new LogicAddr(from),req);
+            return new RpcRequestMessage(to,from,req);
         } else if (msgType == MessageConstont.RpcResp) {
-            MemoryStream memoryStream = new MemoryStream(buff, offset, endOffset - offset);
+            MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
             Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
             resp.MergeFrom(memoryStream);
-            return new RpcResponseMessage(new LogicAddr(to),new LogicAddr(from),resp);
+            return new RpcResponseMessage(to,from,resp);
         } else {
             throw new SystemException("invaild Message");
         }

@@ -10,7 +10,7 @@ public class AES {
     static private byte[] fixKey(byte[] key) 
     {
         if(key.Length > 32) {
-            return new MemoryStream(key,0,32).ToArray();
+            return new Span<byte>(key,0,32).ToArray();
         } else {
             int size = 0;
             if(key.Length < 16) {
@@ -75,7 +75,7 @@ public class AES {
 
         var aes = Aes.Create();
         aes.Key = keybyte;
-        aes.IV  = new MemoryStream(plainbyte,0,blocksize).ToArray();
+        aes.IV  = new Span<byte>(plainbyte,0,blocksize).ToArray();
         aes.Padding = PaddingMode.None;
         aes.Mode = CipherMode.CBC;
 
