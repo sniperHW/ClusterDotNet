@@ -157,7 +157,7 @@ public class SSMessage : MessageI
                 throw new Exception("packet too large");
             }
             stream.Position = position1;   
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(18)));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(payload)));
             stream.Position = position3;
         } catch (Exception e) {
             Console.WriteLine(e);

@@ -194,6 +194,13 @@ public class RpcClient
         channel.SendRequest(request,cancel.Token);
     }
 
+    //public Response<Ret> Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    //{
+    //    SemaphoreSlim semaphore = new SemaphoreSlim(0);
+
+
+    //}
+
     public async Task<Response<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         Rpc.Proto.rpcRequest request = new Rpc.Proto.rpcRequest();
