@@ -424,7 +424,7 @@ public class MessageReceiver: PacketReceiverI
                 } else if(totalSize <= unpackSize) {
                     r += MessageConstont.SizeLen;
                     Object? msg = codec.Decode(buff,r,payload);
-                    r += payload;
+                    r += payload;                    
                     if(r == w){
                         r = w = 0;
                     } 

@@ -164,9 +164,15 @@ public class RpcClient
 
         private SemaphoreSlim semaphore = new SemaphoreSlim(0);
 
-        public async Task<Rpc.Proto.rpcResponse?>  Wait(CancellationToken cancellationToken)
+        public async Task<Rpc.Proto.rpcResponse?>  WaitAsync(CancellationToken cancellationToken)
         {
             await semaphore.WaitAsync(cancellationToken);
+            return Interlocked.Exchange(ref response,null);
+        }
+
+        public Rpc.Proto.rpcResponse? Wait(CancellationToken cancellationToken)
+        {
+            semaphore.Wait(cancellationToken);
             return Interlocked.Exchange(ref response,null);
         }   
 
@@ -183,57 +189,27 @@ public class RpcClient
 
     private Dictionary<ulong,callContext> pendingCall = new Dictionary<ulong,callContext>();
 
-    public void Call<Arg>(RpcChannelI channel,string method,Arg arg) where Arg : IMessage<Arg>
+    private Rpc.Proto.rpcRequest makeRequest<Arg>(string method,Arg arg,bool oneway) where Arg : IMessage<Arg>
     {
         Rpc.Proto.rpcRequest request = new Rpc.Proto.rpcRequest();
         request.Seq = Interlocked.Add(ref nextSeqno,1);
         request.Method = method;
         request.Arg = ByteString.CopyFrom(RpcCodec.Codec.Encode(arg));
-        request.Oneway = true;
-        CancellationTokenSource cancel = new CancellationTokenSource();
-        channel.SendRequest(request,cancel.Token);
+        request.Oneway = oneway;
+        return request;
     }
 
-    //public Response<Ret> Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
-    //{
-    //    SemaphoreSlim semaphore = new SemaphoreSlim(0);
-
-
-    //}
-
-    public async Task<Response<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    public void Call<Arg>(RpcChannelI channel,string method,Arg arg) where Arg : IMessage<Arg>
     {
-        Rpc.Proto.rpcRequest request = new Rpc.Proto.rpcRequest();
-        request.Seq = Interlocked.Add(ref nextSeqno,1);
-        request.Method = method;
-        request.Arg = ByteString.CopyFrom(RpcCodec.Codec.Encode(arg));
-        request.Oneway = false;
+        CancellationTokenSource cancel = new CancellationTokenSource();
+        channel.SendRequest(makeRequest<Arg>(method,arg,true),cancel.Token);
+    }
 
-        callContext context = new callContext();
-        mtx.WaitOne();
-        pendingCall[request.Seq] = context;
-        mtx.ReleaseMutex();
-
-        Exception? e = null;
-        var cancel = false;
-
-        Rpc.Proto.rpcResponse? resp = null;
-        try{
-            channel.SendRequest(request,cancellationToken);
-            resp = await context.Wait(cancellationToken);
-        }
-        catch(OperationCanceledException)
-        {
-            cancel = true;
-        }
-        catch(Exception ee)
-        {
-            e = ee;
-        }
-
+    private Response<Ret> onResponse<Ret>(Rpc.Proto.rpcResponse? resp,ulong seq,bool cancel,Exception? e) where Ret : IMessage<Ret>,new()
+    {
         if(resp is null) {
             mtx.WaitOne();
-            pendingCall.Remove(request.Seq);
+            pendingCall.Remove(seq);
             mtx.ReleaseMutex();
             if(cancel){
                 //无法区分cancel原因，统一按超时处理
@@ -250,7 +226,68 @@ public class RpcClient
             return new Response<Ret>(ret);
         } else {
             return new Response<Ret>(new RpcError(resp.ErrCode,resp.ErrDesc));
+        } 
+
+    }
+
+    public Response<Ret> Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    {
+
+        var request = makeRequest<Arg>(method,arg,false);
+
+        callContext context = new callContext();
+        mtx.WaitOne();
+        pendingCall[request.Seq] = context;
+        mtx.ReleaseMutex();
+
+        Exception? e = null;
+        var cancel = false;
+
+        Rpc.Proto.rpcResponse? resp = null;
+        try{
+            channel.SendRequest(request,cancellationToken);
+            resp = context.Wait(cancellationToken);
         }
+        catch(OperationCanceledException)
+        {
+            cancel = true;
+        }
+        catch(Exception ee)
+        {
+            e = ee;
+        }
+
+        return onResponse<Ret>(resp,request.Seq,cancel,e);
+    }
+
+    public async Task<Response<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    {
+        var request = makeRequest<Arg>(method,arg,false);
+
+        callContext context = new callContext();
+        mtx.WaitOne();
+        pendingCall[request.Seq] = context;
+        mtx.ReleaseMutex();
+
+
+        Exception? e = null;
+        var cancel = false;
+
+        Rpc.Proto.rpcResponse? resp = null;
+        try{
+            channel.SendRequest(request,cancellationToken);
+            resp = await context.WaitAsync(cancellationToken);
+        }
+        catch(OperationCanceledException)
+        {
+            cancel = true;
+        }
+        catch(Exception ee)
+        {
+            e = ee;
+        }
+
+        return onResponse<Ret>(resp,request.Seq,cancel,e);
     }
 
     public void OnMessage(Rpc.Proto.rpcResponse respMsg)

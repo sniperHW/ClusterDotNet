@@ -278,8 +278,22 @@ public class Sanguo
         }
     }
 
-     public async Task<RpcClient.Response<Ret>> CallAsync<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
-     {
+    public RpcClient.Response<Ret> Call<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    {
+        if(to == LocalAddr.LogicAddr){
+            return rpcCli.Call<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
+        } else {
+            Node? node = nodeCache.GetNodeByLogicAddr(to);
+            if(!(node is null)) {
+                return rpcCli.Call<Ret,Arg>(new rpcChannel(this,node,to),method,arg,cancellationToken);
+            } else {
+                return new RpcClient.Response<Ret>(new RpcError(RpcError.ErrOther,"can't find target node"));
+            }
+        }        
+    }
+
+    public async Task<RpcClient.Response<Ret>> CallAsync<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    {
         if(to == LocalAddr.LogicAddr){
             return await rpcCli.CallAsync<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
         } else {
@@ -290,10 +304,10 @@ public class Sanguo
                 return new RpcClient.Response<Ret>(new RpcError(RpcError.ErrOther,"can't find target node"));
             }
         }        
-     }
+    }
 
-     public void RegisterRpc<Arg,Ret>(string method,Action<RpcServer.Replyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
-     {
+    public void RegisterRpc<Arg,Ret>(string method,Action<RpcServer.Replyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
+    {
         rpcSvr.Register<Arg,Ret>(method,serviceFunc);
-     }
+    }
 }

@@ -197,11 +197,12 @@ public class Session
                                 break;
                             }
                         }
-
                         if(memoryStream.Length > 0) {
                             var data = memoryStream.ToArray();
                             await writer.WriteAsync(data, 0, data.Length,writeCancellation.ResetToken());
+                            await writer.FlushAsync(writeCancellation.ResetToken());
                             memoryStream.Position = 0;
+                            memoryStream.SetLength(0);
                         }
                     }
                 }
