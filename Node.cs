@@ -422,10 +422,10 @@ public class Node
         cancellation.CancelAfter(5000);
         try{
             await s.ConnectAsync(Addr.IPEndPoint(),cancellation.Token);
-            var jsonStream = new MemoryStream();
+            using MemoryStream jsonStream = new MemoryStream();
             JsonSerializer.Serialize(jsonStream,new SSLoginReq(sanguo.LocalAddr.LogicAddr.ToUint32(),sanguo.LocalAddr.NetAddr,isStream) ,typeof(SSLoginReq));
             var encryptJson = AES.CbcEncrypt(Sanguo.SecretKey,jsonStream.ToArray());
-            var mstream = new MemoryStream(new byte[4+encryptJson.Length]);
+            using MemoryStream mstream = new MemoryStream(new byte[4+encryptJson.Length]);
             mstream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(encryptJson.Length)));
             mstream.Write(encryptJson);
             var data = mstream.ToArray();  

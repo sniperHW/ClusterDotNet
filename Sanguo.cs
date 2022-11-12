@@ -141,7 +141,7 @@ public class Sanguo
                 return false;
             }
 
-            var jsonstream = new MemoryStream(AES.CbcDecrypt(SecretKey,data));
+            using MemoryStream jsonstream = new MemoryStream(AES.CbcDecrypt(SecretKey,data));
             var ret = JsonSerializer.Deserialize(jsonstream,typeof(SSLoginReq));
             if(ret == null || !(ret is SSLoginReq))
             {

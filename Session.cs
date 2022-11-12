@@ -146,7 +146,7 @@ public class Session
         Task.Run(async () =>
         {
             const int maxSendSize = 65535;
-            MemoryStream memoryStream = new MemoryStream();
+            using MemoryStream memoryStream = new MemoryStream();
             bool finish = false;
             CancellationTokenSource token = new CancellationTokenSource();
             for(;!finish;){

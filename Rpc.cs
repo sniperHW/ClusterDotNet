@@ -18,7 +18,7 @@ public class RpcPbCodec : RpcCodecI
 {
     public byte[] Encode(IMessage m)
     {
-        MemoryStream stream = new MemoryStream();
+        using MemoryStream stream = new MemoryStream();
         m.WriteTo(stream);
         return stream.ToArray();   
     }
@@ -26,7 +26,7 @@ public class RpcPbCodec : RpcCodecI
 
     public void Decode(byte[] buff,IMessage m)
     {
-        MemoryStream stream = new MemoryStream(buff);    
+        using MemoryStream stream = new MemoryStream(buff);    
         m.MergeFrom(stream);
     }
 }

@@ -193,7 +193,7 @@ public class RelayMessage : MessageI
             try
             {
                 var offset = MessageConstont.SizeLen + MessageConstont.SizeFlag;
-                MemoryStream memoryStream = new MemoryStream(Payload, offset, Payload.Length - offset);
+                using MemoryStream memoryStream = new MemoryStream(Payload, offset, Payload.Length - offset);
                 Rpc.Proto.rpcRequest req = new Rpc.Proto.rpcRequest();
                 req.MergeFrom(memoryStream); 
                 return req;
@@ -359,12 +359,12 @@ public class SSMessageCodec : MessageCodecI
             var msg = ProtoMessage.Unmarshal("ss",cmd,buff,readpos,endpos-readpos);
             return new SSMessage(to,from,(ushort)cmd,msg);
         } else if (msgType == MessageConstont.RpcReq) {
-            MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
+            using MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
             Rpc.Proto.rpcRequest req = new Rpc.Proto.rpcRequest();
             req.MergeFrom(memoryStream); 
             return new RpcRequestMessage(to,from,req);
         } else if (msgType == MessageConstont.RpcResp) {
-            MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
+            using MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
             Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
             resp.MergeFrom(memoryStream);
             return new RpcResponseMessage(to,from,resp);
@@ -377,7 +377,7 @@ public class SSMessageCodec : MessageCodecI
 public class MessageReceiver: PacketReceiverI
 {
     private byte[] buff;
-    
+
     private int    w = 0;
 
     private int    r = 0;

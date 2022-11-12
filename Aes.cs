@@ -21,7 +21,7 @@ public class AES {
                 size = 32;
             }
             var padding = size - key.Length%size;
-            var stream = new MemoryStream(new byte[size]);
+            using MemoryStream stream = new MemoryStream(new byte[size]);
             stream.Write(key);
             for(var i = 0;i < padding;i++) {
                 stream.WriteByte((byte)padding);
@@ -32,7 +32,7 @@ public class AES {
     static private byte[] paddingData(byte[] ciphertext,int blockSize) 
     {
         var paddingSize = blockSize - (ciphertext.Length + 4)%blockSize;
-        var stream = new MemoryStream(new byte[ciphertext.Length + 4 + paddingSize]);
+        using MemoryStream stream = new MemoryStream(new byte[ciphertext.Length + 4 + paddingSize]);
         stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(ciphertext.Length)));
         var padding = blockSize - ciphertext.Length%blockSize - 4;
         stream.Write(ciphertext);
@@ -50,7 +50,7 @@ public class AES {
 
         var aes = Aes.Create();
 
-        var stream = new MemoryStream();
+        using MemoryStream stream = new MemoryStream();
 
            
         for(var i = 0;i < blocksize;i++){
@@ -81,14 +81,13 @@ public class AES {
 
         var _crypto = aes.CreateDecryptor(aes.Key, aes.IV);
 
-        var encrypted = new MemoryStream(plainbyte,blocksize,plainbyte.Length-blocksize).ToArray();
+        var encrypted = new Span<byte>(plainbyte,blocksize,plainbyte.Length-blocksize).ToArray();
 
         byte[] decrypted = _crypto.TransformFinalBlock(encrypted, 0, encrypted.Length);
         _crypto.Dispose();
 
         int payload =  IPAddress.NetworkToHostOrder(BitConverter.ToInt32(decrypted, 0));
 
-        return new MemoryStream(decrypted,sizeof(int),payload).ToArray();
-
+        return new Span<byte>(decrypted,sizeof(int),payload).ToArray();
     }
 }
