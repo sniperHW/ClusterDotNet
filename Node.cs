@@ -40,7 +40,7 @@ public class DiscoveryNode : IComparable
 
 }
 
-public interface DiscoveryI
+public interface IDiscovery
 {
     void Subscribe(Action<DiscoveryNode[]> onUpdate);
 }
@@ -328,11 +328,11 @@ public class Node : DiscoveryNode
 
     private class pendingMessage
     {
-        public MessageI message;
+        public ISSMsg message;
         public DateTime? deadline;
         public CancellationToken? cancellationToken;
 
-        public pendingMessage(MessageI message,DateTime? deadline,CancellationToken? cancellationToken)
+        public pendingMessage(ISSMsg message,DateTime? deadline,CancellationToken? cancellationToken)
         {
             this.message = message;
             this.deadline = deadline;
@@ -349,15 +349,9 @@ public class Node : DiscoveryNode
 
     private Mutex mtx = new Mutex();
 
-    //public Addr Addr{get;}
-
-    //public bool Available{get;set;}
-
     public Node(Addr addr,bool available,bool export):base(addr,available,export)
     {
-        //Addr = addr;
-        //Available = available;
-        //Export = export;
+
     }
 
     public void closeSession()
@@ -462,7 +456,7 @@ public class Node : DiscoveryNode
         });         
     }
 
-    public void SendMessage(Sanguo sanguo,MessageI msg,DateTime? deadline,CancellationToken? cancellationToken)
+    public void SendMessage(Sanguo sanguo,ISSMsg msg,DateTime? deadline,CancellationToken? cancellationToken)
     {
         try {
             mtx.WaitOne();
@@ -507,7 +501,7 @@ public class Node : DiscoveryNode
         }
     }
 
-    private void onMessage(Sanguo sanguo,MessageI m)
+    private void onMessage(Sanguo sanguo,ISSMsg m)
     {
         if(m is SSMessage) {
             sanguo.DispatchMsg((SSMessage)m);
@@ -546,9 +540,8 @@ public class Node : DiscoveryNode
 
     private void onEstablish(Sanguo sanguo,Socket s) 
     {
-
-
-        var msgReveiver = new MessageReceiver(MessageConstont.MaxPacketSize,new SSMessageCodec(sanguo.LocalAddr.LogicAddr.ToUint32()));
+        var codec = new SSMessageCodec(sanguo.LocalAddr.LogicAddr.ToUint32());
+        var msgReveiver = new MessageReceiver(MessageConstont.MaxPacketSize,codec);
         session = new Session(s);
         session.SetCloseCallback((Session s) => {
             mtx.WaitOne();
@@ -556,9 +549,9 @@ public class Node : DiscoveryNode
             mtx.ReleaseMutex();
         });
         session.Start(msgReveiver,(Session s,Object packet) => {
-            if(packet is MessageI) {
+            if(packet is ISSMsg) {
                 if(this == sanguo.GetNodeByLogicAddr(Addr.LogicAddr)) {
-                    onMessage(sanguo,(MessageI)packet);
+                    onMessage(sanguo,(ISSMsg)packet);
                     return true;
                 }
             }

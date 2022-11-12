@@ -178,7 +178,7 @@ public class Sanguo
         }
     }
 
-    public void Start(DiscoveryI discovery)
+    public void Start(IDiscovery discovery)
     {
         if(Interlocked.CompareExchange(ref started,1,0) == 0){
             try{

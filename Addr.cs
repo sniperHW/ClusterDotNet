@@ -5,37 +5,29 @@ namespace SanguoDotNet;
 
 
 public class Addr 
-{   
-    private  Mutex mtx;
-    
+{       
     public LogicAddr LogicAddr{get;set;}
 
-    private  string _netAddr;
+    private string _netAddr;
+    
     public string NetAddr
     {
         get
         {
-           string netAddr;
-           mtx.WaitOne();
-           netAddr = _netAddr;
-           mtx.ReleaseMutex();
-           return netAddr;
+            return Interlocked.Exchange(ref _netAddr,_netAddr);
         }
         set
         {
             if(value != null)
             {
-                mtx.WaitOne();
-                _netAddr = value;
-                mtx.ReleaseMutex();
+                Interlocked.Exchange(ref _netAddr,value);
             }            
         }
     }
 
     public Addr(string logicAddr,string netAddr)
     {   
-        mtx = new Mutex();
-        LogicAddr= new(logicAddr);
+        LogicAddr = new(logicAddr);
         _netAddr = netAddr;
     }
 

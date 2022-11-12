@@ -124,7 +124,7 @@ public class MessageConstont
 
 }
 
-public class SSMessage : MessageI
+public class SSMessage : ISSMsg
 {
     public ushort Cmd{get;}
 
@@ -180,7 +180,7 @@ public class SSMessage : MessageI
 
 } 
 
-public class RelayMessage : MessageI
+public class RelayMessage : ISSMsg
 {
     public LogicAddr To{get;}
 
@@ -229,7 +229,7 @@ public class RelayMessage : MessageI
 }
 
 
-public class RpcRequestMessage : MessageI
+public class RpcRequestMessage : ISSMsg
 {
 
     public LogicAddr To{get;}
@@ -272,7 +272,7 @@ public class RpcRequestMessage : MessageI
     }
 }
 
-public class RpcResponseMessage : MessageI
+public class RpcResponseMessage : ISSMsg
 {
 
     public LogicAddr To{get;}
@@ -374,7 +374,7 @@ public class SSMessageCodec : MessageCodecI
     }
 }
 
-public class MessageReceiver: PacketReceiverI
+public class MessageReceiver: IPacketReceiver
 {
     private byte[] buff;
 
@@ -396,7 +396,7 @@ public class MessageReceiver: PacketReceiverI
         this.codec = codec;
     }
 
-    public async Task<Object?> Recv(StreamReaderI reader)
+    public async Task<Object?> Recv(Func<byte[], int, int,Task<int>> recvfunc)
     {
         for(;;)
         {
@@ -426,7 +426,7 @@ public class MessageReceiver: PacketReceiverI
                 }
             }
 
-            var n = await reader.Recv(buff, w, buff.Length-w);
+            var n = await recvfunc(buff, w, buff.Length-w);
             if(n == 0)
             {
                 return null;

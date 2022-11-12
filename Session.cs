@@ -7,56 +7,24 @@ using System.Text;
 using System.Threading;
 namespace SanguoDotNet;
 
-public interface MessageI 
+//interface of server <-> server message 
+public interface ISSMsg 
 {
     void Encode(MemoryStream stream);
 }
 
-public interface StreamReaderI
-{
-    Task<int> Recv(byte[] buffer, int offset, int count);
-}
-
-public interface PacketReceiverI
-{
-    Task<Object?> Recv(StreamReaderI reader);
+public interface IPacketReceiver
+{   
+    Task<Object?> Recv(Func<byte[], int, int,Task<int>> recvfunc);
 }
 
 public class Session
 {
-    private class StreamReader : StreamReaderI
-    {
-        public  int Timeout = 0;
-
-        private CancellationTokenSource token = new CancellationTokenSource();
-
-        private NetworkStream stream;
-
-        public StreamReader(NetworkStream stream)
-        {
-            this.stream = stream;
-        }
-
-        public Task<int> Recv(byte[] buff, int offset, int count) 
-        {
-            if(Timeout > 0) {
-                if(!token.TryReset())
-                {
-                    token = new CancellationTokenSource();
-                }
-                token.CancelAfter(Timeout);
-                return stream.ReadAsync(buff, offset, count,token.Token);
-            } else {
-                return stream.ReadAsync(buff, offset, count);
-            }
-        }
-    }
-
     private NetworkStream stream;
 
     private Socket socket;
 
-    private BufferBlock<MessageI?> sendList = new BufferBlock<MessageI?>();
+    private BufferBlock<ISSMsg?> sendList = new BufferBlock<ISSMsg?>();
 
     private int closed = 0;
 
@@ -104,7 +72,7 @@ public class Session
 
 
 
-    public Session Start(PacketReceiverI receiver,Func<Session, Object,bool> packetCallback) 
+    public Session Start(IPacketReceiver receiver,Func<Session, Object,bool> packetCallback) 
     {
         if(0 == Interlocked.CompareExchange(ref started,1,0)){
             threadCount = 2;
@@ -114,7 +82,7 @@ public class Session
         return this;
     }
 
-    public async void Send(MessageI msg) 
+    public async void Send(ISSMsg msg) 
     {   
         if(!(msg is null))
         {
@@ -212,15 +180,29 @@ public class Session
         });
     }
 
-    private void recvThread(PacketReceiverI receiver,Func<Session, Object,bool> packetCallback)
+    private void recvThread(IPacketReceiver receiver,Func<Session, Object,bool> packetCallback)
     {
         Task.Run(async () =>
         {
-            var reader = new StreamReader(stream);
+            CancellationTokenSource token = new CancellationTokenSource();
+
+            Func<byte[], int, int,Task<int>> recvfunc = (byte[] buff, int offset, int count) =>{
+                if(recvTimeout > 0) {
+                    if(!token.TryReset())
+                    {
+                        token = new CancellationTokenSource();
+                    }
+                    token.CancelAfter(recvTimeout);
+                    return stream.ReadAsync(buff, offset, count,token.Token);
+                } else {
+                    return stream.ReadAsync(buff, offset, count);
+                }
+            };       
+
+
             for(;closed==0;) {
-                reader.Timeout = recvTimeout;
                 try{
-                    var packet = await receiver.Recv(reader);
+                    var packet = await receiver.Recv(recvfunc);
                     if(packet is null || !packetCallback(this,packet))
                     {
                         break;
