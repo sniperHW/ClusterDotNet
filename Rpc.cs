@@ -141,46 +141,49 @@ public class RpcClient
 
     public class Response<Ret>
     {
-        private RpcError? _err;
-        public RpcError? Err {get=>_err;}
-
-        private Ret? _result;
-        public Ret? Result {get=>_result;}
+        public RpcError? Err {get;}
+        public Ret? Result {get;}
     
         public Response(Ret ret)
         {
-            _result = ret;
+            Result = ret;
         }
 
         public Response(RpcError err)
         {
-            _err = err;
+            Err = err;
         }
     }
 
     private class callContext
     {
-        private Rpc.Proto.rpcResponse? response = null;
+        private Rpc.Proto.rpcResponse? _response = null;
+
+        public  Rpc.Proto.rpcResponse? Response{get=> Interlocked.Exchange(ref _response,null);}
+
+        public ulong Seq{get;}
 
         private SemaphoreSlim semaphore = new SemaphoreSlim(0);
 
-        public async Task<Rpc.Proto.rpcResponse?>  WaitAsync(CancellationToken cancellationToken)
+        public async Task  WaitAsync(CancellationToken cancellationToken)
         {
             await semaphore.WaitAsync(cancellationToken);
-            return Interlocked.Exchange(ref response,null);
         }
 
-        public Rpc.Proto.rpcResponse? Wait(CancellationToken cancellationToken)
+        public void Wait(CancellationToken cancellationToken)
         {
             semaphore.Wait(cancellationToken);
-            return Interlocked.Exchange(ref response,null);
         }   
 
-        public void Wakeup(Rpc.Proto.rpcResponse resp)
+        public void OnResponse(Rpc.Proto.rpcResponse resp)
         {
-            Interlocked.Exchange(ref response,resp);
+            Interlocked.Exchange(ref _response,resp);
             semaphore.Release();
         } 
+
+        public callContext(ulong seq) {
+            Seq = seq;
+        }
     }
     
     private ulong nextSeqno = 0;
@@ -205,29 +208,29 @@ public class RpcClient
         channel.SendRequest(makeRequest<Arg>(method,arg,true),cancel.Token);
     }
 
-    private Response<Ret> onResponse<Ret>(Rpc.Proto.rpcResponse? resp,ulong seq,bool cancel,Exception? e) where Ret : IMessage<Ret>,new()
+    private Response<Ret> onResponse<Ret>(callContext context,Exception? e) where Ret : IMessage<Ret>,new()
     {
+        var resp = context.Response;
         if(resp is null) {
             mtx.WaitOne();
-            pendingCall.Remove(seq);
+            pendingCall.Remove(context.Seq);
             mtx.ReleaseMutex();
-            if(cancel){
+            if(e is OperationCanceledException) {
                 //无法区分cancel原因，统一按超时处理
                 return new Response<Ret>(new RpcError(RpcError.ErrTimeout,"timeout"));
-            } else if (e is null) {
+            } else if(e is null) {
                 throw new Exception("resp should not be null");
             } else {
                 throw e;
             }
-    
+
         } else if(resp.ErrCode == 0) {
             Ret ret = new Ret();
             RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
             return new Response<Ret>(ret);
         } else {
             return new Response<Ret>(new RpcError(resp.ErrCode,resp.ErrDesc));
-        } 
-
+        }
     }
 
     public Response<Ret> Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
@@ -235,59 +238,44 @@ public class RpcClient
 
         var request = makeRequest<Arg>(method,arg,false);
 
-        callContext context = new callContext();
+        callContext context = new callContext(request.Seq);
         mtx.WaitOne();
         pendingCall[request.Seq] = context;
         mtx.ReleaseMutex();
 
         Exception? e = null;
-        var cancel = false;
-
-        Rpc.Proto.rpcResponse? resp = null;
         try{
             channel.SendRequest(request,cancellationToken);
-            resp = context.Wait(cancellationToken);
-        }
-        catch(OperationCanceledException)
-        {
-            cancel = true;
+            context.Wait(cancellationToken);
         }
         catch(Exception ee)
         {
             e = ee;
         }
 
-        return onResponse<Ret>(resp,request.Seq,cancel,e);
+        return onResponse<Ret>(context,e);
     }
 
     public async Task<Response<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         var request = makeRequest<Arg>(method,arg,false);
 
-        callContext context = new callContext();
+        callContext context = new callContext(request.Seq);
         mtx.WaitOne();
         pendingCall[request.Seq] = context;
         mtx.ReleaseMutex();
 
 
         Exception? e = null;
-        var cancel = false;
-
-        Rpc.Proto.rpcResponse? resp = null;
         try{
             channel.SendRequest(request,cancellationToken);
-            resp = await context.WaitAsync(cancellationToken);
-        }
-        catch(OperationCanceledException)
-        {
-            cancel = true;
-        }
+            await context.WaitAsync(cancellationToken);
+        } 
         catch(Exception ee)
         {
             e = ee;
         }
-
-        return onResponse<Ret>(resp,request.Seq,cancel,e);
+        return onResponse<Ret>(context,e);
     }
 
     public void OnMessage(Rpc.Proto.rpcResponse respMsg)
@@ -297,7 +285,7 @@ public class RpcClient
             callContext ctx = pendingCall[respMsg.Seq];
             pendingCall.Remove(respMsg.Seq);
             mtx.ReleaseMutex();
-            ctx.Wakeup(respMsg);
+            ctx.OnResponse(respMsg);
         } else {
             mtx.ReleaseMutex();
             Console.WriteLine($"got response but not context seqno:{respMsg.Seq}");

@@ -12,18 +12,15 @@ namespace SanguoDotNet;
 
 public class DiscoveryNode
 {
-    private Addr _addr;
-    public Addr Addr{get=>_addr;set=>_addr=value;}
-    private bool _export;
-    public bool Export{get=>_export;set=>_export=value;}
-    private bool _available;
-    public bool Available{get=>_available;set=>_available=value;}
+    public Addr Addr{get;}
+    public bool Export{get;}
+    public bool Available{get;}
 
     public DiscoveryNode(Addr addr,bool export,bool available)
     {
-        _addr = addr;
-        _export = export;
-        _available = available;
+        Addr = addr;
+        Export = export;
+        Available = available;
     }
 
 }
@@ -375,17 +372,13 @@ public class Node
 
     private Mutex mtx = new Mutex();
 
-    private Addr _addr;
+    public Addr Addr{get;}
 
-    public Addr Addr{get=>_addr;}
-
-    private bool _available;
-
-    public bool Available{get=>_available;set=>_available=value;}
+    public bool Available{get;set;}
 
     public Node(Addr addr,bool available) {
-        _addr = addr;
-        _available = available;
+        Addr = addr;
+        Available = available;
     }
 
     public void closeSession()
@@ -585,7 +578,7 @@ public class Node
         });
         session.Start(msgReveiver,(Session s,Object packet) => {
             if(packet is MessageI) {
-                if(this == sanguo.GetNodeByLogicAddr(_addr.LogicAddr)) {
+                if(this == sanguo.GetNodeByLogicAddr(Addr.LogicAddr)) {
                     onMessage(sanguo,(MessageI)packet);
                     return true;
                 }

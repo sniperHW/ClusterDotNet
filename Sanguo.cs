@@ -11,17 +11,16 @@ namespace SanguoDotNet;
 
 
 public class SSLoginReq {
-	private uint _logicAddr;
-    public uint LogicAddr{get=>_logicAddr;}
-	private string _netAddr;
-    public string NetAddr{get=>_netAddr;}
-    private bool _isStream;
-    public bool IsStream{get=>_isStream;}
+    public uint LogicAddr{get;}
+
+    public string NetAddr{get;}
+    
+    public bool IsStream{get;}
 
     public SSLoginReq(uint logicAddr,string netAddr,bool isStream){
-        _logicAddr = logicAddr;
-        _netAddr = netAddr;
-        _isStream = isStream;
+        LogicAddr = logicAddr;
+        NetAddr = netAddr;
+        IsStream = isStream;
     }
 }
 
@@ -50,8 +49,7 @@ public class Sanguo
         }
     }
 
-    private Addr _localAddr;
-    public Addr LocalAddr{get=>_localAddr;}
+    public Addr LocalAddr{get;}
     private NodeCache nodeCache;
     private RpcClient rpcCli = new RpcClient();
     private RpcServer rpcSvr = new RpcServer();
@@ -65,18 +63,18 @@ public class Sanguo
     private CancellationTokenSource cancel = new CancellationTokenSource(); 
     public Node? GetNodeByLogicAddr(LogicAddr addr) 
     {
-        if(addr.Cluster() == _localAddr.LogicAddr.Cluster()) 
+        if(addr.Cluster() == LocalAddr.LogicAddr.Cluster()) 
         {
             //同一cluster
             return nodeCache.GetNodeByLogicAddr(addr);
         } else {
             //不同cluster,获取本cluster内的harbor
-            if(_localAddr.LogicAddr.Type() == LogicAddr.HarbarType) {
+            if(LocalAddr.LogicAddr.Type() == LogicAddr.HarbarType) {
                 //当前节点为harbor,从harbor集群中获取与addr在同一个cluster的harbor节点
                 return nodeCache.GetHarborByCluster(addr.Cluster(),addr);
             } else {
                 //当前节点非harbor,获取集群中的harbor节点
-                return nodeCache.GetHarborByCluster(_localAddr.LogicAddr.Cluster(),addr); 
+                return nodeCache.GetHarborByCluster(LocalAddr.LogicAddr.Cluster(),addr); 
             }
         }
     }
@@ -116,7 +114,7 @@ public class Sanguo
 
     public Sanguo(Addr addr)
     {
-        _localAddr = addr;
+        LocalAddr = addr;
         nodeCache = new NodeCache(addr.LogicAddr);
     }
     private async Task<bool> onNewConnection(Socket s) 

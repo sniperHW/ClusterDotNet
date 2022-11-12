@@ -7,10 +7,10 @@ namespace SanguoDotNet;
 public class Addr 
 {   
     private  Mutex mtx;
-    private  LogicAddr _logicAddr;
-    private  string _netAddr;
-    public LogicAddr LogicAddr{get => _logicAddr;}
+    
+    public LogicAddr LogicAddr{get;set;}
 
+    private  string _netAddr;
     public string NetAddr
     {
         get
@@ -35,7 +35,7 @@ public class Addr
     public Addr(string logicAddr,string netAddr)
     {   
         mtx = new Mutex();
-        _logicAddr= new(logicAddr);
+        LogicAddr= new(logicAddr);
         _netAddr = netAddr;
     }
 

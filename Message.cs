@@ -126,17 +126,13 @@ public class MessageConstont
 
 public class SSMessage : MessageI
 {
-	private ushort _cmd = 0;
-    public ushort Cmd{get=>_cmd;}
+    public ushort Cmd{get;}
 
-    private LogicAddr _to;
-    public LogicAddr To{get=>_to;}
+    public LogicAddr To{get;}
 
-    private LogicAddr _from;
-    public LogicAddr From{get=>_from;}
+    public LogicAddr From{get;}
 
-    private IMessage _payload;
-    public IMessage Payload{get=>_payload;}
+    public IMessage Payload{get;}
 
     public void Encode(MemoryStream stream)
     {
@@ -145,11 +141,11 @@ public class SSMessage : MessageI
             stream.Write(BitConverter.GetBytes(0));//写入占位符
             byte flag = (byte)(0 | MessageConstont.Msg);
             stream.WriteByte(flag);
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32())));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)_cmd)));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)To.ToUint32())));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)From.ToUint32())));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((short)Cmd)));
             var position2 = stream.Position;
-            ProtoMessage.Marshal("ss",_payload,stream);
+            ProtoMessage.Marshal("ss",Payload,stream);
             int pbSize = (int)(stream.Position - position2);
             var position3 = stream.Position;
             var payload = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + MessageConstont.SizeCmd + pbSize;
@@ -168,39 +164,36 @@ public class SSMessage : MessageI
 
     public SSMessage(LogicAddr to,LogicAddr from,IMessage payload)
     {
-        _to = to;
-        _from = from;
-        _payload = payload;
-        _cmd = (ushort)ProtoMessage.GetID("ss",payload);
+        To = to;
+        From = from;
+        Payload = payload;
+        Cmd = (ushort)ProtoMessage.GetID("ss",payload);
     }
 
     public SSMessage(LogicAddr to,LogicAddr from,ushort cmd,IMessage payload)
     {
-        _to = to;
-        _from = from;
-        _payload = payload;
-        _cmd = cmd;
+        To = to;
+        From = from;
+        Payload = payload;
+        Cmd = cmd;
     }
 
 } 
 
 public class RelayMessage : MessageI
 {
-    private LogicAddr _to;
-    public LogicAddr To{get => _to;}
+    public LogicAddr To{get;}
 
-    private LogicAddr _from;
-    public LogicAddr From{get => _from;}
+    public LogicAddr From{get;}
 
-    private byte[] _payload;
-    public byte[] Payload{get => _payload;}
+    public byte[] Payload{get;}
 
     public Rpc.Proto.rpcRequest? GetRpcRequest(){
-        if(((int)_payload[0] & MessageConstont.MaskMessageType) != MessageConstont.RpcReq){
+        if(((int)Payload[0] & MessageConstont.MaskMessageType) != MessageConstont.RpcReq){
             try
             {
                 var offset = MessageConstont.SizeLen + MessageConstont.SizeFlag;
-                MemoryStream memoryStream = new MemoryStream(_payload, offset, _payload.Length - offset);
+                MemoryStream memoryStream = new MemoryStream(Payload, offset, Payload.Length - offset);
                 Rpc.Proto.rpcRequest req = new Rpc.Proto.rpcRequest();
                 req.MergeFrom(memoryStream); 
                 return req;
@@ -216,18 +209,18 @@ public class RelayMessage : MessageI
 
     public RelayMessage(LogicAddr to,LogicAddr from,byte[] payload)
     {
-        _to = to;
-        _from = from;
-        _payload = payload;
+        To = to;
+        From = from;
+        Payload = payload;
     }
 
     public void Encode(MemoryStream stream)
     {
         var position1 = stream.Position;
         try{
-            var lenBytes = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(_payload.Length));
+            var lenBytes = BitConverter.GetBytes(IPAddress.HostToNetworkOrder(Payload.Length));
             stream.Write(lenBytes,0,lenBytes.Length);
-            stream.Write(_payload,0,_payload.Length);
+            stream.Write(Payload,0,Payload.Length);
         } catch (Exception e) {
             Console.WriteLine(e);
             stream.Position = position1;
@@ -239,21 +232,17 @@ public class RelayMessage : MessageI
 public class RpcRequestMessage : MessageI
 {
 
-    private LogicAddr _to;
-    public LogicAddr To{get=>_to;}
+    public LogicAddr To{get;}
 
-    private LogicAddr _from;
-    public LogicAddr From{get=>_from;}
+    public LogicAddr From{get;}
 
-    private Rpc.Proto.rpcRequest _req;  
-
-    public  Rpc.Proto.rpcRequest Req{get=>_req;}
+    public  Rpc.Proto.rpcRequest Req{get;}
 
     public RpcRequestMessage(LogicAddr to,LogicAddr from,Rpc.Proto.rpcRequest req)
     {
-        _to = to;
-        _from = from;
-        _req = req;
+        To = to;
+        From = from;
+        Req = req;
     }  
 
     public void Encode(MemoryStream stream)
@@ -263,10 +252,10 @@ public class RpcRequestMessage : MessageI
         try{
             stream.Write(BitConverter.GetBytes(0));//占位符
             stream.WriteByte((byte)(0 | MessageConstont.RpcReq));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32()))); 
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)To.ToUint32())));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)From.ToUint32()))); 
             var pos2 = stream.Position;
-            _req.WriteTo(stream);
+            Req.WriteTo(stream);
             var pos3 = stream.Position;
             var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
             if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
@@ -286,21 +275,17 @@ public class RpcRequestMessage : MessageI
 public class RpcResponseMessage : MessageI
 {
 
-    private LogicAddr _to;
-    public LogicAddr To{get=>_to;}
+    public LogicAddr To{get;}
 
-    private LogicAddr _from;
-    public LogicAddr From{get=>_from;}
+    public LogicAddr From{get;}
 
-    private Rpc.Proto.rpcResponse _resp;
-
-    public Rpc.Proto.rpcResponse Resp{get=>_resp;}
+    public Rpc.Proto.rpcResponse Resp{get;}
 
     public RpcResponseMessage(LogicAddr to,LogicAddr from,Rpc.Proto.rpcResponse resp)
     {
-        _to = to;
-        _from = from;        
-        _resp = resp;
+        To = to;
+        From = from;        
+        Resp = resp;
     }
 
     public void Encode(MemoryStream stream)
@@ -310,10 +295,10 @@ public class RpcResponseMessage : MessageI
         try{
             stream.Write(BitConverter.GetBytes(0));//占位符
             stream.WriteByte((byte)(0 | MessageConstont.RpcResp));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_to.ToUint32())));
-            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)_from.ToUint32()))); 
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)To.ToUint32())));
+            stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder((int)From.ToUint32()))); 
             var pos2 = stream.Position;
-            _resp.WriteTo(stream);
+            Resp.WriteTo(stream);
             var pos3 = stream.Position;
             var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
             if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
@@ -392,6 +377,7 @@ public class SSMessageCodec : MessageCodecI
 public class MessageReceiver: PacketReceiverI
 {
     private byte[] buff;
+    
     private int    w = 0;
 
     private int    r = 0;
