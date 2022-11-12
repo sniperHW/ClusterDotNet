@@ -10,11 +10,26 @@ using System.Collections.Generic;
 using System.Text.Json;
 namespace SanguoDotNet;
 
-public class DiscoveryNode
+public class DiscoveryNode : IComparable
 {
     public Addr Addr{get;}
     public bool Export{get;}
-    public bool Available{get;}
+    public bool Available{get;set;}
+
+
+    public int CompareTo(Object? obj) 
+    {
+        if(obj == null) return 1;
+        
+        var other = obj as DiscoveryNode;
+
+        if(other is null) {
+            throw new ArgumentException("Object is not a DiscoveryNode");
+        } else {
+            return Addr.LogicAddr.CompareTo(other.Addr.LogicAddr);
+        }   
+    }
+
 
     public DiscoveryNode(Addr addr,bool export,bool available)
     {
@@ -151,46 +166,6 @@ public class NodeCache
         return n;        
     }
 
-    private class ReverserClass2 : IComparer
-    {
-      public int Compare(Object? x, Object? y)
-      {
-          var xx = (Node?)x;
-          var yy = (Node?)y;
-          if(xx is null) {
-            return -1; 
-          } else if (yy is null){
-            return -1;
-          }else if(xx.Addr.LogicAddr.ToUint32() < yy.Addr.LogicAddr.ToUint32()){
-            return -1;
-          } else if (xx.Addr.LogicAddr.ToUint32() == yy.Addr.LogicAddr.ToUint32()){
-            return 0;
-          } else {
-            return 1;
-          }
-      }
-    }
-
-    private class ReverserClass1 : IComparer
-    {
-      public int Compare(Object? x, Object? y)
-      {
-          var xx = (DiscoveryNode?)x;
-          var yy = (DiscoveryNode?)y;
-          if(xx is null) {
-            return -1; 
-          } else if (yy is null){
-            return -1;
-          }else if(xx.Addr.LogicAddr.ToUint32() < yy.Addr.LogicAddr.ToUint32()){
-            return -1;
-          } else if (xx.Addr.LogicAddr.ToUint32() == yy.Addr.LogicAddr.ToUint32()){
-            return 0;
-          } else {
-            return 1;
-          }
-      }
-    }
-
     public void Stop()
     {
         mtx.WaitOne();
@@ -201,7 +176,7 @@ public class NodeCache
     }
 
     public void onNodeUpdate(Sanguo sanguo, DiscoveryNode []nodeinfo) {
-        ArrayList interested = new ArrayList();
+        List<DiscoveryNode> interested = new List<DiscoveryNode>();
         for(var k = 0;k < nodeinfo.Length;k++){
             DiscoveryNode v = nodeinfo[k];
             if(v.Export || v.Addr.LogicAddr.Cluster() == localAddr.Cluster()){
@@ -210,8 +185,10 @@ public class NodeCache
                 interested.Add(v);
             }
         }
-        interested.Sort(new ReverserClass1());
-        DiscoveryNode[] nodesFromDiscovery = (DiscoveryNode[])interested.ToArray(typeof(DiscoveryNode));
+
+        DiscoveryNode[] nodesFromDiscovery = interested.ToArray();
+        Array.Sort(nodesFromDiscovery);
+
 
         mtx.WaitOne();
 
@@ -221,7 +198,7 @@ public class NodeCache
         foreach( KeyValuePair<uint,Node> kvp in nodes ){
             localNodes[i++] = kvp.Value;
         }
-        Array.Sort(localNodes,new ReverserClass2());
+        Array.Sort(localNodes);
         i = 0;
         var removeSelf = false;
         for(; i < nodesFromDiscovery.Length && j < localNodes.Length ;)
@@ -285,7 +262,7 @@ public class NodeCache
 			    //local  1 2 4 5 6
 			    //update 1 2 3 4 5 6
 			    //添加节点
-                Node n = new Node(updateNode.Addr,updateNode.Available);
+                Node n = new Node(updateNode.Addr,updateNode.Available,updateNode.Export);
                 nodes[updateNode.Addr.LogicAddr.ToUint32()] = n;
 
                 if(n.Available){
@@ -302,7 +279,7 @@ public class NodeCache
         if(!removeSelf) {
             for(; i < nodesFromDiscovery.Length; i++) {
                 var updateNode = (DiscoveryNode)nodesFromDiscovery[i];
-                Node n = new Node(updateNode.Addr,updateNode.Available);
+                Node n = new Node(updateNode.Addr,updateNode.Available,updateNode.Export);
                 nodes[updateNode.Addr.LogicAddr.ToUint32()] = n;
 
                 if(n.Available){
@@ -346,7 +323,7 @@ public class NodeCache
     }    
 }
 
-public class Node
+public class Node : DiscoveryNode
 {
 
     private class pendingMessage
@@ -372,13 +349,15 @@ public class Node
 
     private Mutex mtx = new Mutex();
 
-    public Addr Addr{get;}
+    //public Addr Addr{get;}
 
-    public bool Available{get;set;}
+    //public bool Available{get;set;}
 
-    public Node(Addr addr,bool available) {
-        Addr = addr;
-        Available = available;
+    public Node(Addr addr,bool available,bool export):base(addr,available,export)
+    {
+        //Addr = addr;
+        //Available = available;
+        //Export = export;
     }
 
     public void closeSession()

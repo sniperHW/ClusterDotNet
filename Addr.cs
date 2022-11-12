@@ -50,7 +50,7 @@ public class Addr
 
 }
 
-public class LogicAddr 
+public class LogicAddr : IComparable
 {
     public const uint ClusterMask = 0xFFFC0000; //高14
     public const uint TypeMask = 0x0003FC00;    //中8
@@ -78,18 +78,28 @@ public class LogicAddr
         return $"{Cluster()}.{Type()}.{Server()}";
     }
 
+    public int CompareTo(Object? obj) 
+    {
+        if(obj == null) return 1;
+        
+        var other = obj as LogicAddr;
+
+        if(other is null) {
+            throw new ArgumentException("Object is not a LogicAddr");
+        } else {
+            return _addr.CompareTo(_addr);
+        }   
+    }
+
+
     public override bool Equals(object? obj)
     {
-        if(obj is null) {
-            return false;
-        }
+        if(obj is null) return false;
 
-        if(!(obj is LogicAddr)){
-            return false;
-        }
+        var other = obj as LogicAddr;
 
-        var other = (LogicAddr)obj;
-
+        if(other is null) return false;
+        
         return _addr == other._addr;
     }
 
