@@ -1,6 +1,6 @@
 using System;
-using System.Net;
-using System.Net.Sockets;
+//using System.Net;
+//using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 using System.Text;
@@ -40,6 +40,7 @@ public class RpcCodec
 public interface RpcChannelI
 {
     void SendRequest(Rpc.Proto.rpcRequest request,CancellationToken cancellationToken);
+    void SendRequest(Rpc.Proto.rpcRequest request,DateTime deadline);
     void Reply(Rpc.Proto.rpcResponse response);
     LogicAddr Peer();
 }
@@ -62,11 +63,15 @@ public class rpcChannel : RpcChannelI
         _node.SendMessage(_sanguo,new RpcRequestMessage(_peer,_sanguo.LocalAddr.LogicAddr,request),null,cancellationToken);
     }
 
+    public void SendRequest(Rpc.Proto.rpcRequest request,DateTime deadline)
+    {
+        _node.SendMessage(_sanguo,new RpcRequestMessage(_peer,_sanguo.LocalAddr.LogicAddr,request),deadline,null);
+    }
+
+
     public void Reply(Rpc.Proto.rpcResponse response)
     {
-        CancellationTokenSource source = new CancellationTokenSource();
-        source.CancelAfter(5000);
-        _node.SendMessage(_sanguo,new RpcResponseMessage(_peer,_sanguo.LocalAddr.LogicAddr,response),null,source.Token);
+        _node.SendMessage(_sanguo,new RpcResponseMessage(_peer,_sanguo.LocalAddr.LogicAddr,response),DateTime.Now.AddMilliseconds(5000),null);
     }
 
     public LogicAddr Peer()
@@ -88,6 +93,14 @@ public class selfChannel : RpcChannelI
 
     public void SendRequest(Rpc.Proto.rpcRequest request,CancellationToken cancellationToken)
     {                    
+        Task.Run(() =>
+        {
+            _sanguo.OnRpcRequest(this,request);
+        });
+    }
+
+    public void SendRequest(Rpc.Proto.rpcRequest request,DateTime deadline)
+    {
         Task.Run(() =>
         {
             _sanguo.OnRpcRequest(this,request);
@@ -204,8 +217,7 @@ public class RpcClient
 
     public void Call<Arg>(RpcChannelI channel,string method,Arg arg) where Arg : IMessage<Arg>
     {
-        CancellationTokenSource cancel = new CancellationTokenSource();
-        channel.SendRequest(makeRequest<Arg>(method,arg,true),cancel.Token);
+        channel.SendRequest(makeRequest<Arg>(method,arg,true),DateTime.Now.AddMilliseconds(1000));
     }
 
     private Response<Ret> onResponse<Ret>(callContext context,Exception? e) where Ret : IMessage<Ret>,new()

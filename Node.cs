@@ -1,5 +1,5 @@
 using System;
-using System.Net;
+//using System.Net;
 using System.Net.Sockets;
 using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
@@ -391,7 +391,7 @@ public class Node : DiscoveryNode
 
     private async Task<bool> connectAndLogin(Sanguo sanguo,Socket s,bool isStream)
     {
-        var cancellation = new CancellationTokenSource();
+        using CancellationTokenSource cancellation = new CancellationTokenSource();
         cancellation.CancelAfter(5000);
         try{
             await s.ConnectAsync(Addr.IPEndPoint(),cancellation.Token);
@@ -399,7 +399,7 @@ public class Node : DiscoveryNode
             JsonSerializer.Serialize(jsonStream,new SSLoginReq(sanguo.LocalAddr.LogicAddr.ToUint32(),sanguo.LocalAddr.NetAddr,isStream) ,typeof(SSLoginReq));
             var encryptJson = AES.CbcEncrypt(Sanguo.SecretKey,jsonStream.ToArray());
             using MemoryStream mstream = new MemoryStream(new byte[4+encryptJson.Length]);
-            mstream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(encryptJson.Length)));
+            mstream.Write(BitConverter.GetBytes(Endian.Big(encryptJson.Length)));
             mstream.Write(encryptJson);
             var data = mstream.ToArray();  
             using NetworkStream nstream = new(s, ownsSocket: false);

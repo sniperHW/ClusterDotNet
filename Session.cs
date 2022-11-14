@@ -22,8 +22,6 @@ public class Session
 {
     private NetworkStream stream;
 
-    private Socket socket;
-
     private BufferBlock<ISSMsg?> sendList = new BufferBlock<ISSMsg?>();
 
     private int closed = 0;
@@ -42,7 +40,6 @@ public class Session
 
     public Session(Socket s)
     {
-        socket = s;
         stream = new NetworkStream(s,ownsSocket: true);
     }
 
@@ -84,6 +81,9 @@ public class Session
 
     public async void Send(ISSMsg msg) 
     {   
+        if(closed != 0) {
+            return;
+        }
         if(!(msg is null))
         {
             await sendList.SendAsync(msg);
@@ -94,7 +94,7 @@ public class Session
     {
         if(0 == Interlocked.CompareExchange(ref closed,1,0)){
             sendList.Post(null);
-            socket.Shutdown(SocketShutdown.Receive);
+            stream.Socket.Shutdown(SocketShutdown.Receive);
             if(started == 0)
             {
                 stream.Dispose();
@@ -137,16 +137,17 @@ public class Session
                             }
                         }
                         if(memoryStream.Length > 0) {
-                            var data = memoryStream.ToArray();
+                            var data = memoryStream.GetBuffer(); //memoryStream.ToArray();
                             if(sendTimeout > 0) {
                                 if(!token.TryReset())
                                 {
+                                    token.Dispose();
                                     token = new CancellationTokenSource();
                                 }
                                 token.CancelAfter(sendTimeout);
-                                await stream.WriteAsync(data, 0, data.Length,token.Token);
+                                await stream.WriteAsync(data, 0, (int)memoryStream.Position,token.Token);
                             } else {
-                                await stream.WriteAsync(data, 0, data.Length);
+                                await stream.WriteAsync(data, 0, (int)memoryStream.Position);
                             }    
                             memoryStream.Position = 0;
                             memoryStream.SetLength(0);
@@ -164,10 +165,11 @@ public class Session
                 }
             }
 
+            token.Dispose();
             memoryStream.Dispose();
 
             if(0 == Interlocked.CompareExchange(ref closed,1,0)){
-                socket.Shutdown(SocketShutdown.Receive);   
+                stream.Socket.Shutdown(SocketShutdown.Receive);   
             }
 
             if(Interlocked.Add(ref threadCount,-1) == 0) {
@@ -190,6 +192,7 @@ public class Session
                 if(recvTimeout > 0) {
                     if(!token.TryReset())
                     {
+                        token.Dispose();
                         token = new CancellationTokenSource();
                     }
                     token.CancelAfter(recvTimeout);
@@ -223,7 +226,8 @@ public class Session
                     break;
                 }
             }
-
+            
+            token.Dispose();
             if(0 == Interlocked.CompareExchange(ref closed,1,0)){
                 sendList.Post(null);
             }

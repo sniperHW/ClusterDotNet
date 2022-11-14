@@ -1,5 +1,4 @@
 using System.Security.Cryptography;
-using System.Net;
 
 namespace SanguoDotNet;
 
@@ -33,7 +32,7 @@ public class AES {
     {
         var paddingSize = blockSize - (ciphertext.Length + 4)%blockSize;
         using MemoryStream stream = new MemoryStream(new byte[ciphertext.Length + 4 + paddingSize]);
-        stream.Write(BitConverter.GetBytes(IPAddress.HostToNetworkOrder(ciphertext.Length)));
+        stream.Write(BitConverter.GetBytes(Endian.Big(ciphertext.Length)));
         var padding = blockSize - ciphertext.Length%blockSize - 4;
         stream.Write(ciphertext);
         for(var i = 0;i < padding;i++) {
@@ -86,7 +85,7 @@ public class AES {
         byte[] decrypted = _crypto.TransformFinalBlock(encrypted, 0, encrypted.Length);
         _crypto.Dispose();
 
-        int payload =  IPAddress.NetworkToHostOrder(BitConverter.ToInt32(decrypted, 0));
+        int payload =  Endian.Big(BitConverter.ToInt32(decrypted, 0));
 
         return new Span<byte>(decrypted,sizeof(int),payload).ToArray();
     }

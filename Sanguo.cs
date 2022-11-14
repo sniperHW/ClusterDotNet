@@ -119,7 +119,7 @@ public class Sanguo
     }
     private async Task<bool> onNewConnection(Socket s) 
     {
-        var cancellation = new CancellationTokenSource();
+        using CancellationTokenSource cancellation = new CancellationTokenSource();
         cancellation.CancelAfter(1000);
         try{
             using NetworkStream nstream = new(s, ownsSocket: false);
