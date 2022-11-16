@@ -54,14 +54,14 @@ public class Sanguo
     private RpcClient rpcCli = new RpcClient();
     private RpcServer rpcSvr = new RpcServer();
     private MsgManager msgManager = new MsgManager();
-    private int _die = 0;
-    public  bool Die{get=>_die==1;}
+    private int die = 0;
     public  static byte[] SecretKey = Encoding.ASCII.GetBytes("sanguo_2022");
     private SemaphoreSlim waitStop = new SemaphoreSlim(0);
     private Socket? listener;
     private int started;
-    private CancellationTokenSource cancel = new CancellationTokenSource(); 
-    public Node? GetNodeByLogicAddr(LogicAddr addr) 
+    internal CancellationTokenSource cancel = new CancellationTokenSource();
+    internal Action<Smux.Stream>? fnOnNewStream; 
+    internal Node? GetNodeByLogicAddr(LogicAddr addr) 
     {
         if(addr.Cluster() == LocalAddr.LogicAddr.Cluster()) 
         {
@@ -119,7 +119,7 @@ public class Sanguo
     }
     private async Task<bool> onNewConnection(Socket s) 
     {
-        using CancellationTokenSource cancellation = new CancellationTokenSource();
+        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);
         cancellation.CancelAfter(1000);
         try{
             using NetworkStream nstream = new(s, ownsSocket: false);
@@ -158,19 +158,46 @@ public class Sanguo
 
             if(loginReq.IsStream) 
             {
-                await nstream.WriteAsync(BitConverter.GetBytes(0),0,sizeof(uint),cancellation.Token);
+                if(fnOnNewStream is null)
+                {
+                    return false;
+                }
+                else 
+                {
+                    await nstream.WriteAsync(BitConverter.GetBytes(0),0,sizeof(uint),cancellation.Token);
+                    var streamSvr = Smux.Session.Server(new NetworkStream(s,ownsSocket: true),new Smux.Config());
+                    await Task.Run(async()=>{
+                        for(;;)
+                        {
+                            try
+                            {
+                                var stream = await streamSvr.AcceptStreamAsync(cancel.Token);
+                                fnOnNewStream(stream);
+                            }
+                            catch(Exception)
+                            {
+                                break;
+                            }
+
+                        }
+                        s.Close();
+                    });
+                    return true;
+                }
             }
             else 
             {
                 if(!node.CheckConnection(this))
                 {
                     return false;
+                } 
+                else 
+                {
+                    await nstream.WriteAsync(BitConverter.GetBytes(0),0,sizeof(uint),cancellation.Token);
+                    node.OnEstablish(this,s);
+                    return true;
                 }
-                await nstream.WriteAsync(BitConverter.GetBytes(0),0,sizeof(uint),cancellation.Token);
             }
-
-            node.OnEstablish(this,s);
-            return true;
         }
         catch(Exception)
         {
@@ -179,6 +206,16 @@ public class Sanguo
     }
 
     public void Start(IDiscovery discovery)
+    {
+        start(discovery,null);
+    }
+
+    public void Start(IDiscovery discovery,Action<Smux.Stream> onNewStream)
+    {
+        start(discovery,onNewStream);
+    }
+
+    private void start(IDiscovery discovery,Action<Smux.Stream>? onNewStream)
     {
         if(Interlocked.CompareExchange(ref started,1,0) == 0){
             try{
@@ -193,6 +230,7 @@ public class Sanguo
                     return;
                 }
 
+                fnOnNewStream = onNewStream;
                 listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 listener.Bind(LocalAddr.IPEndPoint());
                 listener.Listen(int.MaxValue);
@@ -204,14 +242,12 @@ public class Sanguo
                         for(;;){
                             Socket ts = await listener.AcceptAsync(cancel.Token);
                             Console.WriteLine("on new client");
-                            #pragma warning disable CS4014
-                            Task.Run(async ()=>{
+                            await Task.Run(async ()=>{
                                 var ok = await onNewConnection(ts); 
                                 if(!ok) {
                                     ts.Close();
                                 }
                             });
-                            #pragma warning restore CS4014
                         }
                     }
                     catch(Exception)
@@ -230,7 +266,7 @@ public class Sanguo
 
     public void Stop()
     {
-        if(Interlocked.CompareExchange(ref _die,1,0) == 0){
+        if(Interlocked.CompareExchange(ref die,1,0) == 0){
             cancel.Cancel();
             listener?.Close();
             nodeCache.Stop();
@@ -250,6 +286,25 @@ public class Sanguo
             return null;
         } else {
             return node.Addr.LogicAddr;
+        }
+    }
+
+    public Task<Smux.Stream> OpenStreamAsync(LogicAddr to)
+    {
+
+        if(to == LocalAddr.LogicAddr)
+        {
+            throw new Exception("can not open stream to self");
+        }
+
+        Node? node = nodeCache.GetNodeByLogicAddr(to);
+        if(node is null)
+        {
+            throw new Exception("can not find target node");
+        }
+        else 
+        {
+            return node.OpenStreamAsync(this);
         }
     }
 
@@ -276,7 +331,7 @@ public class Sanguo
         }
     }
 
-    public RpcClient.Response<Ret> Call<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    public RpcResponse<Ret> Call<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         if(to == LocalAddr.LogicAddr){
             return rpcCli.Call<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
@@ -285,26 +340,26 @@ public class Sanguo
             if(!(node is null)) {
                 return rpcCli.Call<Ret,Arg>(new rpcChannel(this,node,to),method,arg,cancellationToken);
             } else {
-                return new RpcClient.Response<Ret>(new RpcError(RpcError.ErrOther,"can't find target node"));
+                throw new Exception("can not find target node");
             }
         }        
     }
 
-    public async Task<RpcClient.Response<Ret>> CallAsync<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    public Task<RpcResponse<Ret>> CallAsync<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         if(to == LocalAddr.LogicAddr){
-            return await rpcCli.CallAsync<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
+            return rpcCli.CallAsync<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
         } else {
             Node? node = nodeCache.GetNodeByLogicAddr(to);
             if(!(node is null)) {
-                return await rpcCli.CallAsync<Ret,Arg>(new rpcChannel(this,node,to),method,arg,cancellationToken);
+                return rpcCli.CallAsync<Ret,Arg>(new rpcChannel(this,node,to),method,arg,cancellationToken);
             } else {
-                return new RpcClient.Response<Ret>(new RpcError(RpcError.ErrOther,"can't find target node"));
+                throw new Exception("can not find target node");
             }
         }        
     }
 
-    public void RegisterRpc<Arg,Ret>(string method,Action<RpcServer.Replyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
+    public void RegisterRpc<Arg,Ret>(string method,Action<RpcReplyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
     {
         rpcSvr.Register<Arg,Ret>(method,serviceFunc);
     }

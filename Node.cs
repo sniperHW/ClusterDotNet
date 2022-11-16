@@ -46,7 +46,7 @@ public interface IDiscovery
 }
 
 
-public class NodeCache
+internal class NodeCache
 {
     private Mutex mtx = new Mutex();
     private LogicAddr localAddr;
@@ -323,7 +323,7 @@ public class NodeCache
     }    
 }
 
-public class Node : DiscoveryNode
+internal class Node : DiscoveryNode
 {
 
     private class pendingMessage
@@ -338,16 +338,133 @@ public class Node : DiscoveryNode
             this.deadline = deadline;
             this.cancellationToken = cancellationToken;
         }
-
     }
 
+    private class StreamClient
+    {
+
+        public class OpenRequest
+        {
+            public Smux.Stream?  stream;
+            public Exception?    exception;
+            private SemaphoreSlim semaphore = new SemaphoreSlim(0);
+            public async Task WaitAsync(CancellationToken cancellationToken)
+            {
+                await semaphore.WaitAsync(cancellationToken);
+            }
+            public void OnOpenResponse(Smux.Stream? stream,Exception? exception)
+            {
+                Interlocked.Exchange(ref this.stream,stream);
+                Interlocked.Exchange(ref this.exception,exception);
+                semaphore.Release();
+            }
+        } 
+
+        private Mutex mtx = new Mutex();
+        private LinkedList<OpenRequest> openReqs = new LinkedList<OpenRequest>();
+        private Smux.Session? smuxSession = null;
+        public void Close()
+        {
+            Smux.Session? session = null;
+            mtx.WaitOne();
+            session = smuxSession;
+            smuxSession = null;
+            mtx.ReleaseMutex();
+            if(session != null)
+            {
+                session.Close();   
+            }
+        }
+
+        private void dial(Sanguo sanguo,Node node)
+        {
+            Task.Run(async () => {
+                Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
+                var ok = await node.connectAndLogin(sanguo,s,false);
+                if(!ok)
+                {   
+                    mtx.WaitOne();
+                    var e = new Exception("connect failed");
+                    for(var node = openReqs.First;node != null;)
+                    {
+                        var req = node.Value;
+                        openReqs.RemoveFirst();
+                        req.OnOpenResponse(null,e);
+                    }
+                    mtx.ReleaseMutex();
+                }
+                else
+                {
+                    mtx.WaitOne();
+                    var openReqs = this.openReqs;
+                    this.openReqs = new LinkedList<OpenRequest>();
+                    smuxSession = Smux.Session.Client(new NetworkStream(s,ownsSocket: true),new Smux.Config());
+                    var session = smuxSession;
+                    mtx.ReleaseMutex();
+                    for(var node = openReqs.First;node != null;)
+                    {
+                        var req = node.Value;
+                        openReqs.RemoveFirst();
+
+                        try
+                        {
+                            var stream = await session.OpenStreamAsync();
+                            req.OnOpenResponse(stream,null);
+                        }
+                        catch(Exception e)
+                        {
+                            req.OnOpenResponse(null,e);
+                        } 
+                    }
+                }
+            });         
+        }
+
+        public async Task<Smux.Stream> OpenStreamAsync(Sanguo sanguo,Node node)
+        {
+            mtx.WaitOne();
+            if(smuxSession is null)
+            {
+                var openReq = new OpenRequest();
+                openReqs.AddLast(openReq);
+                if(openReqs.Count == 1)
+                {
+                    dial(sanguo,node);
+                }
+                mtx.ReleaseMutex();
+
+                try
+                {
+                    await openReq.WaitAsync(sanguo.cancel.Token);
+                }
+                catch(OperationCanceledException)
+                {
+                    throw new Exception("sanguo is closed");
+                }
+
+                if(openReq.stream is null)
+                {
+                    throw new Exception("connect failed");
+                }
+                else 
+                {
+                    return openReq.stream;
+                }
+            } 
+            else 
+            {
+                var session = smuxSession;
+                mtx.ReleaseMutex();
+                return await session.OpenStreamAsync();
+            }
+        }
+    }
+    
+
     private LinkedList<pendingMessage> pendingMsg = new LinkedList<pendingMessage>();
-
     private Session? session = null;
-
-    private bool dialing = false;
-
     private Mutex mtx = new Mutex();
+    private StreamClient streamCli = new StreamClient();
 
     public Node(Addr addr,bool available,bool export):base(addr,available,export)
     {
@@ -362,7 +479,13 @@ public class Node : DiscoveryNode
             session = null;
         }
         mtx.ReleaseMutex();
+        streamCli.Close();
     }   
+
+    public Task<Smux.Stream> OpenStreamAsync(Sanguo sanguo)
+    {
+        return streamCli.OpenStreamAsync(sanguo,this);
+    }
 
     //清理已经超时或被取消的pendingMsg,返回pendingMsg中是否还有
     private void clearPendingMsg() 
@@ -389,9 +512,9 @@ public class Node : DiscoveryNode
         }
     }
 
-    private async Task<bool> connectAndLogin(Sanguo sanguo,Socket s,bool isStream)
+    internal async Task<bool> connectAndLogin(Sanguo sanguo,Socket s,bool isStream)
     {
-        using CancellationTokenSource cancellation = new CancellationTokenSource();
+        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(sanguo.cancel.Token);
         cancellation.CancelAfter(5000);
         try{
             await s.ConnectAsync(Addr.IPEndPoint(),cancellation.Token);
@@ -425,17 +548,16 @@ public class Node : DiscoveryNode
     {
         Task.Run(async () => {
             for(;;){
-                if(sanguo.Die){
+                if(sanguo.cancel.IsCancellationRequested){
                     return;
                 }
                 Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 var ok = await connectAndLogin(sanguo,s,false);
                 if(ok) {
-                    if(sanguo.Die) {
+                    if(sanguo.cancel.IsCancellationRequested) {
                         s.Close();
                     } else {
                         mtx.WaitOne();
-                        dialing = false;
                         onEstablish(sanguo,s);
                         mtx.ReleaseMutex();
                     }
@@ -444,7 +566,6 @@ public class Node : DiscoveryNode
                     mtx.WaitOne();
                     clearPendingMsg();
                     if(pendingMsg.Count == 0) {
-                        dialing = false;
                         mtx.ReleaseMutex();
                         return;
                     } else {
@@ -464,8 +585,7 @@ public class Node : DiscoveryNode
                 session.Send(msg);        
             } else {
                 pendingMsg.AddLast(new pendingMessage(msg,deadline,cancellationToken));
-                if(!dialing){
-                    dialing = true;
+                if(pendingMsg.Count == 1){
                     dial(sanguo);
                 }
             } 
@@ -519,7 +639,7 @@ public class Node : DiscoveryNode
     {        
         var ok = true;
         mtx.WaitOne();
-        if(dialing) {
+        if(pendingMsg.Count != 0) {
             if(sanguo.LocalAddr.LogicAddr.ToUint32() < Addr.LogicAddr.ToUint32()){
                 ok = false;
             }

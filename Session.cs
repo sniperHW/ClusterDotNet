@@ -137,7 +137,7 @@ public class Session
                             }
                         }
                         if(memoryStream.Length > 0) {
-                            var data = memoryStream.GetBuffer(); //memoryStream.ToArray();
+                            var data = memoryStream.GetBuffer();
                             if(sendTimeout > 0) {
                                 if(!token.TryReset())
                                 {

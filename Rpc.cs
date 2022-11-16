@@ -45,7 +45,7 @@ public interface RpcChannelI
     LogicAddr Peer();
 }
 
-public class rpcChannel : RpcChannelI
+internal class rpcChannel : RpcChannelI
 {
     private LogicAddr _peer;
     private Node      _node;
@@ -82,7 +82,7 @@ public class rpcChannel : RpcChannelI
 }
 
 
-public class selfChannel : RpcChannelI
+internal class selfChannel : RpcChannelI
 {
     private Sanguo    _sanguo;
 
@@ -149,25 +149,24 @@ public class RpcError
     }
 }
 
-public class RpcClient
+public class RpcResponse<Ret>
 {
+    public RpcError? Err {get;}
+    public Ret? Result {get;}
 
-    public class Response<Ret>
+    public RpcResponse(Ret ret)
     {
-        public RpcError? Err {get;}
-        public Ret? Result {get;}
-    
-        public Response(Ret ret)
-        {
-            Result = ret;
-        }
-
-        public Response(RpcError err)
-        {
-            Err = err;
-        }
+        Result = ret;
     }
 
+    public RpcResponse(RpcError err)
+    {
+        Err = err;
+    }
+}
+
+internal class RpcClient
+{
     private class callContext
     {
         private Rpc.Proto.rpcResponse? _response = null;
@@ -178,9 +177,9 @@ public class RpcClient
 
         private SemaphoreSlim semaphore = new SemaphoreSlim(0);
 
-        public async Task  WaitAsync(CancellationToken cancellationToken)
+        public Task WaitAsync(CancellationToken cancellationToken)
         {
-            await semaphore.WaitAsync(cancellationToken);
+            return semaphore.WaitAsync(cancellationToken);
         }
 
         public void Wait(CancellationToken cancellationToken)
@@ -215,12 +214,12 @@ public class RpcClient
         return request;
     }
 
-    public void Call<Arg>(RpcChannelI channel,string method,Arg arg) where Arg : IMessage<Arg>
+    internal void Call<Arg>(RpcChannelI channel,string method,Arg arg) where Arg : IMessage<Arg>
     {
         channel.SendRequest(makeRequest<Arg>(method,arg,true),DateTime.Now.AddMilliseconds(1000));
     }
 
-    private Response<Ret> onResponse<Ret>(callContext context,Exception? e) where Ret : IMessage<Ret>,new()
+    private RpcResponse<Ret> onResponse<Ret>(callContext context,Exception? e) where Ret : IMessage<Ret>,new()
     {
         var resp = context.Response;
         if(resp is null) {
@@ -229,7 +228,7 @@ public class RpcClient
             mtx.ReleaseMutex();
             if(e is OperationCanceledException) {
                 //无法区分cancel原因，统一按超时处理
-                return new Response<Ret>(new RpcError(RpcError.ErrTimeout,"timeout"));
+                return new RpcResponse<Ret>(new RpcError(RpcError.ErrTimeout,"timeout"));
             } else if(e is null) {
                 throw new Exception("resp should not be null");
             } else {
@@ -239,13 +238,13 @@ public class RpcClient
         } else if(resp.ErrCode == 0) {
             Ret ret = new Ret();
             RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
-            return new Response<Ret>(ret);
+            return new RpcResponse<Ret>(ret);
         } else {
-            return new Response<Ret>(new RpcError(resp.ErrCode,resp.ErrDesc));
+            return new RpcResponse<Ret>(new RpcError(resp.ErrCode,resp.ErrDesc));
         }
     }
 
-    public Response<Ret> Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    internal RpcResponse<Ret> Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
 
         var request = makeRequest<Arg>(method,arg,false);
@@ -268,7 +267,7 @@ public class RpcClient
         return onResponse<Ret>(context,e);
     }
 
-    public async Task<Response<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    internal async Task<RpcResponse<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         var request = makeRequest<Arg>(method,arg,false);
 
@@ -290,7 +289,7 @@ public class RpcClient
         return onResponse<Ret>(context,e);
     }
 
-    public void OnMessage(Rpc.Proto.rpcResponse respMsg)
+    internal void OnMessage(Rpc.Proto.rpcResponse respMsg)
     {
         mtx.WaitOne();
         if(pendingCall.ContainsKey(respMsg.Seq)) {
@@ -305,55 +304,55 @@ public class RpcClient
     }
 }
 
-public class RpcServer
+public class RpcReplyer<Ret> where Ret : IMessage<Ret>
 {
-    public class Replyer<Ret> where Ret : IMessage<Ret>
+    private RpcChannelI _channel;
+    public RpcChannelI Channel{get=>_channel;}
+    private ulong       _seq;
+    private int         _replied = 0;
+    private bool        _oneway;
+
+    public RpcReplyer(RpcChannelI channel,ulong seq,bool oneway)
     {
-        private RpcChannelI _channel;
-        public RpcChannelI Channel{get=>_channel;}
-        private ulong       _seq;
-        private int         _replied = 0;
-        private bool        _oneway;
+        _channel = channel;
+        _seq = seq;
+        _oneway = oneway;
+    }
 
-        public Replyer(RpcChannelI channel,ulong seq,bool oneway)
+    public void Reply(Ret ret)
+    {
+        if(!_oneway && Interlocked.CompareExchange(ref _replied,1,0) == 0)
         {
-            _channel = channel;
-            _seq = seq;
-            _oneway = oneway;
-        }
+            Rpc.Proto.rpcResponse response = new Rpc.Proto.rpcResponse();
 
-        public void Reply(Ret ret)
-        {
-            if(!_oneway && Interlocked.CompareExchange(ref _replied,1,0) == 0)
-            {
-                Rpc.Proto.rpcResponse response = new Rpc.Proto.rpcResponse();
+            response.Seq = _seq;
 
-                response.Seq = _seq;
+            response.Ret = ByteString.CopyFrom(RpcCodec.Codec.Encode(ret));
 
-                response.Ret = ByteString.CopyFrom(RpcCodec.Codec.Encode(ret));
-
-                _channel.Reply(response);
-            }
-        }
-
-        public void Reply(RpcError error)
-        {
-            if(!_oneway && Interlocked.CompareExchange(ref _replied,1,0) == 0)
-            {
-                Rpc.Proto.rpcResponse response = new Rpc.Proto.rpcResponse();
-
-                response.Seq = _seq;
-
-                response.ErrCode = error.Code;
-
-                response.ErrDesc = error.Desc;
-
-                _channel.Reply(response);
-
-            }
+            _channel.Reply(response);
         }
     }
 
+    public void Reply(RpcError error)
+    {
+        if(!_oneway && Interlocked.CompareExchange(ref _replied,1,0) == 0)
+        {
+            Rpc.Proto.rpcResponse response = new Rpc.Proto.rpcResponse();
+
+            response.Seq = _seq;
+
+            response.ErrCode = error.Code;
+
+            response.ErrDesc = error.Desc;
+
+            _channel.Reply(response);
+
+        }
+    }
+}
+
+internal class RpcServer
+{
     private Mutex mtx = new Mutex();
 
     private Dictionary<string,Action<RpcChannelI,Rpc.Proto.rpcRequest>> methods = new Dictionary<string,Action<RpcChannelI,Rpc.Proto.rpcRequest>>();
@@ -370,7 +369,7 @@ public class RpcServer
         Interlocked.CompareExchange(ref pause,0,1);
     }
 
-    public void Register<Arg,Ret>(string method,Action<Replyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
+    public void Register<Arg,Ret>(string method,Action<RpcReplyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
     {
 
         mtx.WaitOne();
@@ -385,7 +384,7 @@ public class RpcServer
             try{
                 Arg arg = new Arg();
                 RpcCodec.Codec.Decode(req.Arg.ToByteArray(),arg);
-                Replyer<Ret> replyer = new Replyer<Ret>(channel,req.Seq,req.Oneway);
+                RpcReplyer<Ret> replyer = new RpcReplyer<Ret>(channel,req.Seq,req.Oneway);
                 serviceFunc(replyer,arg);
             }catch(Exception e)
             {
