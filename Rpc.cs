@@ -149,6 +149,25 @@ public class RpcError
     }
 }
 
+
+public class RpcException : Exception
+{
+    public string Msg{get;}
+    
+    public uint  ErrCode{get;} 
+
+    public RpcException(string msg,uint errCode)
+    {
+        Msg = msg;
+        ErrCode = errCode;
+    }
+
+    override public string ToString()
+    {
+        return $"RpcException:{Msg}";
+    }
+}
+
 public class RpcResponse<Ret>
 {
     public RpcError? Err {get;}
@@ -219,7 +238,7 @@ internal class RpcClient
         channel.SendRequest(makeRequest<Arg>(method,arg,true),DateTime.Now.AddMilliseconds(1000));
     }
 
-    private RpcResponse<Ret> onResponse<Ret>(callContext context,Exception? e) where Ret : IMessage<Ret>,new()
+    private Ret onResponse<Ret>(callContext context,Exception? e) where Ret : IMessage<Ret>,new()
     {
         var resp = context.Response;
         if(resp is null) {
@@ -228,7 +247,7 @@ internal class RpcClient
             mtx.ReleaseMutex();
             if(e is OperationCanceledException) {
                 //无法区分cancel原因，统一按超时处理
-                return new RpcResponse<Ret>(new RpcError(RpcError.ErrTimeout,"timeout"));
+                throw new RpcException("ErrTimeout",RpcError.ErrTimeout);
             } else if(e is null) {
                 throw new Exception("resp should not be null");
             } else {
@@ -238,13 +257,13 @@ internal class RpcClient
         } else if(resp.ErrCode == 0) {
             Ret ret = new Ret();
             RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
-            return new RpcResponse<Ret>(ret);
+            return ret;
         } else {
-            return new RpcResponse<Ret>(new RpcError(resp.ErrCode,resp.ErrDesc));
+            throw new RpcException(resp.ErrDesc,resp.ErrCode);
         }
     }
 
-    internal RpcResponse<Ret> Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    internal Ret Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
 
         var request = makeRequest<Arg>(method,arg,false);
@@ -267,7 +286,7 @@ internal class RpcClient
         return onResponse<Ret>(context,e);
     }
 
-    internal async Task<RpcResponse<Ret>> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    internal async Task<Ret> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         var request = makeRequest<Arg>(method,arg,false);
 
@@ -376,7 +395,7 @@ internal class RpcServer
         if(methods.ContainsKey(method))
         {   
             mtx.ReleaseMutex();
-            throw new Exception("duplicate method");
+            throw new SanguoException("duplicate rpc method");
         }
 
         methods[method] = (RpcChannelI channel,Rpc.Proto.rpcRequest req) =>

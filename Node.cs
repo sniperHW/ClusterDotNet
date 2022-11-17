@@ -384,7 +384,7 @@ internal class Node : DiscoveryNode
                 if(!ok)
                 {   
                     mtx.WaitOne();
-                    var e = new Exception("connect failed");
+                    var e = new SanguoException("connect failed");
                     for(var node = openReqs.First;node != null;)
                     {
                         var req = node.Value;
@@ -439,12 +439,12 @@ internal class Node : DiscoveryNode
                 }
                 catch(OperationCanceledException)
                 {
-                    throw new Exception("sanguo is closed");
+                    throw new SanguoException("sanguo is closed");
                 }
 
                 if(openReq.stream is null)
                 {
-                    throw new Exception("connect failed");
+                    throw new SanguoException("connect failed");
                 }
                 else 
                 {

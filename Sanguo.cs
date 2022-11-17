@@ -24,6 +24,22 @@ public class SSLoginReq {
     }
 }
 
+
+public class SanguoException : Exception
+{
+    public string Msg{get;}
+
+    public SanguoException(string msg)
+    {
+        Msg = msg;
+    }
+
+    override public string ToString()
+    {
+        return $"SanguoException:{Msg}";
+    }
+}
+
 public class Sanguo
 {
     private class MsgManager 
@@ -80,17 +96,11 @@ public class Sanguo
     }
 
     public void RegisterMsg<T>(Action<LogicAddr,T> func) where T : IMessage<T>,new()
-    {
-        try{
-            var cmd = ProtoMessage.GetID("ss",new T());
-            msgManager.Register((ushort)cmd,(LogicAddr from, IMessage m)=>{
-                func(from,(T)m);
-            });
-        }
-        catch(Exception)
-        {
-            Console.WriteLine("invaild msg");
-        }
+    {        
+        var cmd = ProtoMessage.GetID("ss",new T());
+        msgManager.Register((ushort)cmd,(LogicAddr from, IMessage m)=>{
+            func(from,(T)m);
+        });   
     }
 
     public void DispatchMsg(SSMessage m)
@@ -290,13 +300,13 @@ public class Sanguo
 
         if(to == LocalAddr.LogicAddr)
         {
-            throw new Exception("can not open stream to self");
+            throw new SanguoException("can not open stream to self");
         }
 
         Node? node = nodeCache.GetNodeByLogicAddr(to);
         if(node is null)
         {
-            throw new Exception("can not find target node");
+            throw new SanguoException("can not find target node");
         }
         else 
         {
@@ -310,7 +320,7 @@ public class Sanguo
         if(!(node is null)){
             node.SendMessage(this,new SSMessage(to,LocalAddr.LogicAddr,msg),DateTime.Now.AddMilliseconds(1000),null);
         } else {
-            Console.WriteLine($"{to.ToString} not in config");
+            throw new SanguoException($"{to.ToString} not in config");
         }
     }
 
@@ -327,7 +337,7 @@ public class Sanguo
         }
     }
 
-    public RpcResponse<Ret> Call<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    public Ret Call<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         if(to == LocalAddr.LogicAddr){
             return rpcCli.Call<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
@@ -336,12 +346,12 @@ public class Sanguo
             if(!(node is null)) {
                 return rpcCli.Call<Ret,Arg>(new rpcChannel(this,node,to),method,arg,cancellationToken);
             } else {
-                throw new Exception("can not find target node");
+                throw new RpcException("can not find target node",RpcError.ErrSend);
             }
         }        
     }
 
-    public Task<RpcResponse<Ret>> CallAsync<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
+    public Task<Ret> CallAsync<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         if(to == LocalAddr.LogicAddr){
             return rpcCli.CallAsync<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
@@ -350,7 +360,7 @@ public class Sanguo
             if(!(node is null)) {
                 return rpcCli.CallAsync<Ret,Arg>(new rpcChannel(this,node,to),method,arg,cancellationToken);
             } else {
-                throw new Exception("can not find target node");
+                throw new RpcException("can not find target node",RpcError.ErrSend);
             }
         }        
     }

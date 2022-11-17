@@ -35,7 +35,7 @@ public class Addr
     {
         var r = NetAddr.Split(':');
         if(r.Length != 2) {
-            throw new Exception("invaild netaddr");
+            throw new SanguoException("invaild netaddr");
         }
         return new IPEndPoint(IPAddress.Parse(r[0]),Convert.ToInt32(r[1]));
     }
