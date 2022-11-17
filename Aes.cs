@@ -1,6 +1,6 @@
 using System.Security.Cryptography;
 
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 public class AES {
 

@@ -6,7 +6,7 @@ using System.Threading.Tasks.Dataflow;
 using System.Text;
 using System.Threading;
 using Google.Protobuf;
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 public interface RpcCodecI 
 {
@@ -49,29 +49,29 @@ internal class rpcChannel : RpcChannelI
 {
     private LogicAddr _peer;
     private Node      _node;
-    private Sanguo    _sanguo;
+    private ClusterNode  _self;
 
-    public rpcChannel(Sanguo sanguo,Node node,LogicAddr peer)
+    public rpcChannel(ClusterNode self,Node node,LogicAddr peer)
     {
-        _sanguo = sanguo;
+        _self = self;
         _node = node;
         _peer = peer;
     }
 
     public void SendRequest(Rpc.Proto.rpcRequest request,CancellationToken cancellationToken)
     {
-        _node.SendMessage(_sanguo,new RpcRequestMessage(_peer,_sanguo.LocalAddr.LogicAddr,request),null,cancellationToken);
+        _node.SendMessage(_self,new RpcRequestMessage(_peer,_self.LocalAddr.LogicAddr,request),null,cancellationToken);
     }
 
     public void SendRequest(Rpc.Proto.rpcRequest request,DateTime deadline)
     {
-        _node.SendMessage(_sanguo,new RpcRequestMessage(_peer,_sanguo.LocalAddr.LogicAddr,request),deadline,null);
+        _node.SendMessage(_self,new RpcRequestMessage(_peer,_self.LocalAddr.LogicAddr,request),deadline,null);
     }
 
 
     public void Reply(Rpc.Proto.rpcResponse response)
     {
-        _node.SendMessage(_sanguo,new RpcResponseMessage(_peer,_sanguo.LocalAddr.LogicAddr,response),DateTime.Now.AddMilliseconds(5000),null);
+        _node.SendMessage(_self,new RpcResponseMessage(_peer,_self.LocalAddr.LogicAddr,response),DateTime.Now.AddMilliseconds(5000),null);
     }
 
     public LogicAddr Peer()
@@ -84,18 +84,18 @@ internal class rpcChannel : RpcChannelI
 
 internal class selfChannel : RpcChannelI
 {
-    private Sanguo    _sanguo;
+    private ClusterNode  _self;
 
-    public selfChannel(Sanguo sanguo)
+    public selfChannel(ClusterNode self)
     {
-        _sanguo = sanguo;
+        _self = self;
     }
 
     public void SendRequest(Rpc.Proto.rpcRequest request,CancellationToken cancellationToken)
     {                    
         Task.Run(() =>
         {
-            _sanguo.OnRpcRequest(this,request);
+            _self.OnRpcRequest(this,request);
         });
     }
 
@@ -103,7 +103,7 @@ internal class selfChannel : RpcChannelI
     {
         Task.Run(() =>
         {
-            _sanguo.OnRpcRequest(this,request);
+            _self.OnRpcRequest(this,request);
         });
     }
 
@@ -111,13 +111,13 @@ internal class selfChannel : RpcChannelI
     {
         Task.Run(() =>
         {
-            _sanguo.OnRpcResponse(response);
+            _self.OnRpcResponse(response);
         });
     }
 
     public LogicAddr Peer()
     {
-        return _sanguo.LocalAddr.LogicAddr;
+        return _self.LocalAddr.LogicAddr;
     }
 
 }
@@ -395,7 +395,7 @@ internal class RpcServer
         if(methods.ContainsKey(method))
         {   
             mtx.ReleaseMutex();
-            throw new SanguoException("duplicate rpc method");
+            throw new ClusterException("duplicate rpc method");
         }
 
         methods[method] = (RpcChannelI channel,Rpc.Proto.rpcRequest req) =>

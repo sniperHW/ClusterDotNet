@@ -6,7 +6,7 @@ using System.Threading.Tasks.Dataflow;
 using System.Text;
 using System.Threading;
 using Google.Protobuf;
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 
 public class ProtoMessage
@@ -20,9 +20,9 @@ public class ProtoMessage
         public void Register<T>(int id,T message) where T : IMessage<T>,new()
         {
             if(nameToID.ContainsKey(message.Descriptor.Name)) {
-                throw new SanguoException($"message:{message.Descriptor.Name} exists");
+                throw new ClusterException($"message:{message.Descriptor.Name} exists");
             } else if(idToMeta.ContainsKey(id)) {
-                throw new SanguoException($"duplicate id:{id}");
+                throw new ClusterException($"duplicate id:{id}");
             } else {
                 nameToID[message.Descriptor.Name] = id;
                 idToMeta[id] = () => {
@@ -34,7 +34,7 @@ public class ProtoMessage
         public IMessage Unmarshal(int id,byte[] buff,int offset,int length)
         {
             if(!idToMeta.ContainsKey(id)){
-                throw new SanguoException($"id:{id} not register");
+                throw new ClusterException($"id:{id} not register");
             }
 
             Func<IMessage> factory = idToMeta[id];
@@ -47,7 +47,7 @@ public class ProtoMessage
         public void Marshal(IMessage message,MemoryStream stream)
         {
             if(!nameToID.ContainsKey(message.Descriptor.Name)) {
-                throw new SanguoException($"message:{message.Descriptor.Name} not register");
+                throw new ClusterException($"message:{message.Descriptor.Name} not register");
             } else {
                 message.WriteTo(stream);
             }
@@ -56,7 +56,7 @@ public class ProtoMessage
         public int GetID(IMessage message)
         {
             if(!nameToID.ContainsKey(message.Descriptor.Name)) {
-                throw new SanguoException($"message:{message.Descriptor.Name} not register");
+                throw new ClusterException($"message:{message.Descriptor.Name} not register");
             } else {
                 return nameToID[message.Descriptor.Name];
             }            
@@ -81,7 +81,7 @@ public class ProtoMessage
     public static IMessage Unmarshal(string ns,int id,byte[] buff,int offset,int length)
     {
         if(!Namespace.ContainsKey(ns)){
-            throw new SanguoException($"namespace:{ns} not exists");
+            throw new ClusterException($"namespace:{ns} not exists");
         }
         return Namespace[ns].Unmarshal(id,buff,offset,length);
     }
@@ -89,7 +89,7 @@ public class ProtoMessage
     public static  void Marshal(string ns,IMessage message,MemoryStream stream) 
     {
         if(!Namespace.ContainsKey(ns)){
-            throw new SanguoException($"namespace:{ns} not exists");
+            throw new ClusterException($"namespace:{ns} not exists");
         }
         Namespace[ns].Marshal(message,stream);
     }
@@ -97,7 +97,7 @@ public class ProtoMessage
     public static int GetID(string ns,IMessage message) 
     {
         if(!Namespace.ContainsKey(ns)){
-            throw new SanguoException($"namespace:{ns} not exists");
+            throw new ClusterException($"namespace:{ns} not exists");
         }
         return Namespace[ns].GetID(message);        
     }
@@ -150,7 +150,7 @@ public class SSMessage : ISSMsg
             var position3 = stream.Position;
             var payload = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + MessageConstont.SizeCmd + pbSize;
             if(payload+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
-                throw new SanguoException("packet too large");
+                throw new ClusterException("packet too large");
             }
             stream.Position = position1;   
             stream.Write(BitConverter.GetBytes(Endian.Big(payload)));
@@ -259,7 +259,7 @@ public class RpcRequestMessage : ISSMsg
             var pos3 = stream.Position;
             var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
             if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
-                throw new SanguoException("packet too large");
+                throw new ClusterException("packet too large");
             }
             stream.Position = oriPos;
             stream.Write(BitConverter.GetBytes(Endian.Big(payloadLen)));
@@ -302,7 +302,7 @@ public class RpcResponseMessage : ISSMsg
             var pos3 = stream.Position;
             var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
             if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
-                throw new SanguoException("packet too large");
+                throw new ClusterException("packet too large");
             }
             stream.Position = oriPos;
             stream.Write(BitConverter.GetBytes(Endian.Big(payloadLen)));
@@ -336,7 +336,7 @@ public class SSMessageCodec : MessageCodecI
         var readpos = offset;
         var endpos = offset + length;
         if(length<MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom) {
-            throw new SanguoException("invaild Message");
+            throw new ClusterException("invaild Message");
         }
         byte flag = buff[readpos];
         readpos += MessageConstont.SizeFlag;
@@ -352,7 +352,7 @@ public class SSMessageCodec : MessageCodecI
             return new RelayMessage(to,from,new Span<byte>(buff,offset,length).ToArray());
         } else if(msgType == MessageConstont.Msg) {
             if(buff.Length - readpos < MessageConstont.SizeCmd) {
-                throw new SanguoException("invaild Message");
+                throw new ClusterException("invaild Message");
             }
             var cmd = Endian.Big((short)BitConverter.ToUInt16(buff, readpos));
             readpos += MessageConstont.SizeCmd;
@@ -369,7 +369,7 @@ public class SSMessageCodec : MessageCodecI
             resp.MergeFrom(memoryStream);
             return new RpcResponseMessage(to,from,resp);
         } else {
-            throw new SanguoException("invaild Message");
+            throw new ClusterException("invaild Message");
         }
     }
 }
@@ -389,7 +389,7 @@ public class MessageReceiver: IPacketReceiver
     public MessageReceiver(int maxPacketSize,MessageCodecI codec)
     {
         if(maxPacketSize <= 0) {
-            throw new SanguoException("invaild MaxPacketSize");
+            throw new ClusterException("invaild MaxPacketSize");
         }
         this.maxPacketSize = maxPacketSize;
         buff = new byte[this.maxPacketSize];
@@ -408,9 +408,9 @@ public class MessageReceiver: IPacketReceiver
 
                 if(payload <= 0)
                 {
-                    throw new SanguoException("invaild payload");
+                    throw new ClusterException("invaild payload");
                 } else if(totalSize > maxPacketSize){
-                    throw new SanguoException("packet too large");
+                    throw new ClusterException("packet too large");
                 } else if(totalSize <= unpackSize) {
                     r += MessageConstont.SizeLen;
                     Object? msg = codec.Decode(buff,r,payload);

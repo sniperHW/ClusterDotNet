@@ -8,7 +8,7 @@ using System.Threading;
 using System.Collections;
 using System.Collections.Generic;
 using System.Text.Json;
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 public class DiscoveryNode : IComparable
 {
@@ -49,7 +49,7 @@ public interface IDiscovery
 internal class NodeCache
 {
     private Mutex mtx = new Mutex();
-    private LogicAddr localAddr;
+    public  LogicAddr localAddr;
     private int initOK = 0;
     private SemaphoreSlim semaphore = new SemaphoreSlim(0);
     private Random rnd = new Random();
@@ -59,9 +59,9 @@ internal class NodeCache
 
     Dictionary<uint,ArrayList> harborsByCluster = new Dictionary<uint,ArrayList>();
 
-    public NodeCache(LogicAddr localAddr) 
+    public NodeCache() 
     {
-        this.localAddr = localAddr;
+        localAddr = new LogicAddr();
     }
 
     public void WaitInit(CancellationToken cancellationToken) {
@@ -175,7 +175,7 @@ internal class NodeCache
         mtx.ReleaseMutex();
     }
 
-    public void onNodeUpdate(Sanguo sanguo, DiscoveryNode []nodeinfo) {
+    public void onNodeUpdate(ClusterNode self, DiscoveryNode []nodeinfo) {
         List<DiscoveryNode> interested = new List<DiscoveryNode>();
         for(var k = 0;k < nodeinfo.Length;k++){
             DiscoveryNode v = nodeinfo[k];
@@ -313,7 +313,7 @@ internal class NodeCache
         mtx.ReleaseMutex();
 
         if(removeSelf) {
-            Task.Run(()=>sanguo.Stop());
+            Task.Run(()=>self.Stop());
 
         } else {
             if(Interlocked.CompareExchange(ref initOK,1,0) == 0){
@@ -376,15 +376,15 @@ internal class Node : DiscoveryNode
             }
         }
 
-        private void dial(Sanguo sanguo,Node node)
+        private void dial(ClusterNode self,Node node)
         {
             Task.Run(async () => {
                 Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                var ok = await node.connectAndLogin(sanguo,s,false);
+                var ok = await node.connectAndLogin(self,s,false);
                 if(!ok)
                 {   
                     mtx.WaitOne();
-                    var e = new SanguoException("connect failed");
+                    var e = new ClusterException("connect failed");
                     for(var node = openReqs.First;node != null;)
                     {
                         var req = node.Value;
@@ -420,7 +420,7 @@ internal class Node : DiscoveryNode
             });         
         }
 
-        public async Task<Smux.Stream> OpenStreamAsync(Sanguo sanguo,Node node)
+        public async Task<Smux.Stream> OpenStreamAsync(ClusterNode self,Node node)
         {
             mtx.WaitOne();
             if(smuxSession is null)
@@ -429,22 +429,22 @@ internal class Node : DiscoveryNode
                 openReqs.AddLast(openReq);
                 if(openReqs.Count == 1)
                 {
-                    dial(sanguo,node);
+                    dial(self,node);
                 }
                 mtx.ReleaseMutex();
 
                 try
                 {
-                    await openReq.WaitAsync(sanguo.die.Token);
+                    await openReq.WaitAsync(self.die.Token);
                 }
                 catch(OperationCanceledException)
                 {
-                    throw new SanguoException("sanguo is closed");
+                    throw new ClusterException("sanguo is closed");
                 }
 
                 if(openReq.stream is null)
                 {
-                    throw new SanguoException("connect failed");
+                    throw new ClusterException("connect failed");
                 }
                 else 
                 {
@@ -482,9 +482,9 @@ internal class Node : DiscoveryNode
         streamCli.Close();
     }   
 
-    public Task<Smux.Stream> OpenStreamAsync(Sanguo sanguo)
+    public Task<Smux.Stream> OpenStreamAsync(ClusterNode self)
     {
-        return streamCli.OpenStreamAsync(sanguo,this);
+        return streamCli.OpenStreamAsync(self,this);
     }
 
     //清理已经超时或被取消的pendingMsg,返回pendingMsg中是否还有
@@ -512,15 +512,15 @@ internal class Node : DiscoveryNode
         }
     }
 
-    internal async Task<bool> connectAndLogin(Sanguo sanguo,Socket s,bool isStream)
+    internal async Task<bool> connectAndLogin(ClusterNode self,Socket s,bool isStream)
     {
-        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(sanguo.die.Token);
+        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(self.die.Token);
         cancellation.CancelAfter(5000);
         try{
             await s.ConnectAsync(Addr.IPEndPoint(),cancellation.Token);
             using MemoryStream jsonStream = new MemoryStream();
-            JsonSerializer.Serialize(jsonStream,new SSLoginReq(sanguo.LocalAddr.LogicAddr.ToUint32(),sanguo.LocalAddr.NetAddr,isStream) ,typeof(SSLoginReq));
-            var encryptJson = AES.CbcEncrypt(Sanguo.SecretKey,jsonStream.ToArray());
+            JsonSerializer.Serialize(jsonStream,new SSLoginReq(self.LocalAddr.LogicAddr.ToUint32(),self.LocalAddr.NetAddr,isStream) ,typeof(SSLoginReq));
+            var encryptJson = AES.CbcEncrypt(ClusterNode.SecretKey,jsonStream.ToArray());
             using MemoryStream mstream = new MemoryStream(new byte[4+encryptJson.Length]);
             mstream.Write(BitConverter.GetBytes(Endian.Big(encryptJson.Length)));
             mstream.Write(encryptJson);
@@ -544,21 +544,21 @@ internal class Node : DiscoveryNode
 
 
 
-    private void dial(Sanguo sanguo)
+    private void dial(ClusterNode self)
     {
         Task.Run(async () => {
             for(;;){
-                if(sanguo.die.IsCancellationRequested){
+                if(self.die.IsCancellationRequested){
                     return;
                 }
                 Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                var ok = await connectAndLogin(sanguo,s,false);
+                var ok = await connectAndLogin(self,s,false);
                 if(ok) {
-                    if(sanguo.die.IsCancellationRequested) {
+                    if(self.die.IsCancellationRequested) {
                         s.Close();
                     } else {
                         mtx.WaitOne();
-                        onEstablish(sanguo,s);
+                        onEstablish(self,s);
                         mtx.ReleaseMutex();
                     }
                     return;
@@ -577,7 +577,7 @@ internal class Node : DiscoveryNode
         });         
     }
 
-    public void SendMessage(Sanguo sanguo,ISSMsg msg,DateTime? deadline,CancellationToken? cancellationToken)
+    public void SendMessage(ClusterNode self,ISSMsg msg,DateTime? deadline,CancellationToken? cancellationToken)
     {
         try {
             mtx.WaitOne();
@@ -586,7 +586,7 @@ internal class Node : DiscoveryNode
             } else {
                 pendingMsg.AddLast(new pendingMessage(msg,deadline,cancellationToken));
                 if(pendingMsg.Count == 1){
-                    dial(sanguo);
+                    dial(self);
                 }
             } 
         }
@@ -600,47 +600,47 @@ internal class Node : DiscoveryNode
         }
     }
 
-    private void onRelayMessage(Sanguo sanguo,RelayMessage msg)
+    private void onRelayMessage(ClusterNode self,RelayMessage msg)
     {
-        Console.WriteLine($"onRelayMessage self:{sanguo.LocalAddr.LogicAddr.ToString()} {msg.From.ToString()}->{msg.To.ToString()}");
-        var nextNode = sanguo.GetNodeByLogicAddr(msg.To);
+        Console.WriteLine($"onRelayMessage self:{self.LocalAddr.LogicAddr.ToString()} {msg.From.ToString()}->{msg.To.ToString()}");
+        var nextNode = self.GetNodeByLogicAddr(msg.To);
         if(!(nextNode is null)) {
-            nextNode.SendMessage(sanguo,msg,DateTime.Now.AddSeconds(1),null);
+            nextNode.SendMessage(self,msg,DateTime.Now.AddSeconds(1),null);
         } else {
             var rpcReq = msg.GetRpcRequest();
             //目标不可达，如果消息是RPC请求，向请求端返回不可达错误
             if(!(rpcReq is null) && !rpcReq.Oneway){
-                nextNode = sanguo.GetNodeByLogicAddr(msg.From);
+                nextNode = self.GetNodeByLogicAddr(msg.From);
                 if(!(nextNode is null)) {
                     var resp = new Rpc.Proto.rpcResponse();
                     resp.ErrCode = RpcError.ErrOther;
                     resp.ErrDesc = $"route message to target:{msg.To.ToString()} failed";
-                    nextNode.SendMessage(sanguo,new RpcResponseMessage(msg.From,sanguo.LocalAddr.LogicAddr,resp),DateTime.Now.AddSeconds(1),null);
+                    nextNode.SendMessage(self,new RpcResponseMessage(msg.From,self.LocalAddr.LogicAddr,resp),DateTime.Now.AddSeconds(1),null);
                 }
             }
         }
     }
 
-    private void onMessage(Sanguo sanguo,ISSMsg m)
+    private void onMessage(ClusterNode self,ISSMsg m)
     {
         if(m is SSMessage) {
-            sanguo.DispatchMsg((SSMessage)m);
+            self.DispatchMsg((SSMessage)m);
         } else if (m is RpcRequestMessage) {
             var request = (RpcRequestMessage)m;
-            sanguo.OnRpcRequest(new rpcChannel(sanguo,this,request.From),request.Req);
+            self.OnRpcRequest(new rpcChannel(self,this,request.From),request.Req);
         } else if (m is RpcResponseMessage) {
-            sanguo.OnRpcResponse(((RpcResponseMessage)m).Resp);
+            self.OnRpcResponse(((RpcResponseMessage)m).Resp);
         } else if (m is RelayMessage) {
-            onRelayMessage(sanguo,(RelayMessage)m);
+            onRelayMessage(self,(RelayMessage)m);
         }
     }
 
-    public bool CheckConnection(Sanguo sanguo)
+    public bool CheckConnection(ClusterNode self)
     {        
         var ok = true;
         mtx.WaitOne();
         if(pendingMsg.Count != 0) {
-            if(sanguo.LocalAddr.LogicAddr.ToUint32() < Addr.LogicAddr.ToUint32()){
+            if(self.LocalAddr.LogicAddr.ToUint32() < Addr.LogicAddr.ToUint32()){
                 ok = false;
             }
 
@@ -651,16 +651,16 @@ internal class Node : DiscoveryNode
         return ok;
     }
 
-    public void OnEstablish(Sanguo sanguo,Socket s)
+    public void OnEstablish(ClusterNode self,Socket s)
     {   
         mtx.WaitOne();
-        onEstablish(sanguo,s);
+        onEstablish(self,s);
         mtx.ReleaseMutex();
     }
 
-    private void onEstablish(Sanguo sanguo,Socket s) 
+    private void onEstablish(ClusterNode self,Socket s) 
     {
-        var codec = new SSMessageCodec(sanguo.LocalAddr.LogicAddr.ToUint32());
+        var codec = new SSMessageCodec(self.LocalAddr.LogicAddr.ToUint32());
         var msgReveiver = new MessageReceiver(MessageConstont.MaxPacketSize,codec);
         session = new Session(s);
         session.SetCloseCallback((Session s) => {
@@ -670,8 +670,8 @@ internal class Node : DiscoveryNode
         });
         session.Start(msgReveiver,(Session s,Object packet) => {
             if(packet is ISSMsg) {
-                if(this == sanguo.GetNodeByLogicAddr(Addr.LogicAddr)) {
-                    onMessage(sanguo,(ISSMsg)packet);
+                if(this == self.GetNodeByLogicAddr(Addr.LogicAddr)) {
+                    onMessage(self,(ISSMsg)packet);
                     return true;
                 }
             }

@@ -1,5 +1,5 @@
 using System.Net;
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 public class Endian
 {

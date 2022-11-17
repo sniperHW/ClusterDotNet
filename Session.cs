@@ -5,7 +5,7 @@ using System.Threading.Tasks;
 using System.Threading.Tasks.Dataflow;
 using System.Text;
 using System.Threading;
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 //interface of server <-> server message 
 public interface ISSMsg 

@@ -9,7 +9,7 @@ using pb = global::Google.Protobuf;
 using pbc = global::Google.Protobuf.Collections;
 using pbr = global::Google.Protobuf.Reflection;
 using scg = global::System.Collections.Generic;
-namespace SanguoDotNet.Rpc.Proto {
+namespace ClusterDotNet.Rpc.Proto {
 
   /// <summary>Holder for reflection information generated from rpc.proto</summary>
   public static partial class RpcReflection {
@@ -32,8 +32,8 @@ namespace SanguoDotNet.Rpc.Proto {
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { },
           new pbr::GeneratedClrTypeInfo(null, null, new pbr::GeneratedClrTypeInfo[] {
-            new pbr::GeneratedClrTypeInfo(typeof(global::SanguoDotNet.Rpc.Proto.rpcRequest), global::SanguoDotNet.Rpc.Proto.rpcRequest.Parser, new[]{ "Seq", "Method", "Arg", "Oneway" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::SanguoDotNet.Rpc.Proto.rpcResponse), global::SanguoDotNet.Rpc.Proto.rpcResponse.Parser, new[]{ "Seq", "Ret", "ErrCode", "ErrDesc" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::ClusterDotNet.Rpc.Proto.rpcRequest), global::ClusterDotNet.Rpc.Proto.rpcRequest.Parser, new[]{ "Seq", "Method", "Arg", "Oneway" }, null, null, null, null),
+            new pbr::GeneratedClrTypeInfo(typeof(global::ClusterDotNet.Rpc.Proto.rpcResponse), global::ClusterDotNet.Rpc.Proto.rpcResponse.Parser, new[]{ "Seq", "Ret", "ErrCode", "ErrDesc" }, null, null, null, null)
           }));
     }
     #endregion
@@ -54,7 +54,7 @@ namespace SanguoDotNet.Rpc.Proto {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SanguoDotNet.Rpc.Proto.RpcReflection.Descriptor.MessageTypes[0]; }
+      get { return global::ClusterDotNet.Rpc.Proto.RpcReflection.Descriptor.MessageTypes[0]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
@@ -354,7 +354,7 @@ namespace SanguoDotNet.Rpc.Proto {
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public static pbr::MessageDescriptor Descriptor {
-      get { return global::SanguoDotNet.Rpc.Proto.RpcReflection.Descriptor.MessageTypes[1]; }
+      get { return global::ClusterDotNet.Rpc.Proto.RpcReflection.Descriptor.MessageTypes[1]; }
     }
 
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]

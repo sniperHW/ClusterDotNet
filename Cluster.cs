@@ -7,7 +7,7 @@ using System.Text;
 using System.Threading;
 using Google.Protobuf;
 using System.Text.Json;
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 
 public class SSLoginReq {
@@ -25,22 +25,48 @@ public class SSLoginReq {
 }
 
 
-public class SanguoException : Exception
+public class Once
+{
+    private bool done = false;
+    private Mutex mtx = new Mutex();
+
+    public void Do(Action fn)
+    {
+        if(done)
+        {
+            return;
+        }
+        else 
+        {
+            mtx.WaitOne();
+            if(!done)
+            {
+                fn();
+                done = true;
+            }
+            mtx.ReleaseMutex();
+        }
+    }
+}
+
+
+public class ClusterException : Exception
 {
     public string Msg{get;}
 
-    public SanguoException(string msg)
+    public ClusterException(string msg)
     {
         Msg = msg;
     }
 
     override public string ToString()
     {
-        return $"SanguoException:{Msg}";
+        return $"ClusterException:{Msg}";
     }
 }
 
-public class Sanguo
+//当前节点对象
+public class ClusterNode
 {
     private class MsgManager 
     {
@@ -65,7 +91,8 @@ public class Sanguo
         }
     }
 
-    public Addr LocalAddr{get;}
+    private Addr localAddr;
+    public Addr LocalAddr{get=>localAddr;}
     private NodeCache nodeCache;
     private RpcClient rpcCli = new RpcClient();
     private RpcServer rpcSvr = new RpcServer();
@@ -122,10 +149,10 @@ public class Sanguo
         rpcSvr.OnMessage(channel,req);
     }
 
-    public Sanguo(Addr addr)
+    public ClusterNode()
     {
-        LocalAddr = addr;
-        nodeCache = new NodeCache(addr.LogicAddr);
+        localAddr = new Addr();
+        nodeCache = new NodeCache();
     }
     private async Task<bool> onNewConnection(Socket s) 
     {
@@ -222,10 +249,12 @@ public class Sanguo
         Interlocked.Exchange(ref fnOnNewStream,onNewStream);
     }
 
-    public void Start(IDiscovery discovery)
+    public void Start(IDiscovery discovery,Addr addr)
     {
         if(Interlocked.CompareExchange(ref startOnce,1,0) == 0){
             try{
+                localAddr = addr;
+                nodeCache.localAddr = addr.LogicAddr;
                 discovery.Subscribe((DiscoveryNode[] nodeInfo)=>{
                     nodeCache.onNodeUpdate(this,nodeInfo);
                 });
@@ -300,13 +329,13 @@ public class Sanguo
 
         if(to == LocalAddr.LogicAddr)
         {
-            throw new SanguoException("can not open stream to self");
+            throw new ClusterException("can not open stream to self");
         }
 
         Node? node = nodeCache.GetNodeByLogicAddr(to);
         if(node is null)
         {
-            throw new SanguoException("can not find target node");
+            throw new ClusterException("can not find target node");
         }
         else 
         {
@@ -320,7 +349,7 @@ public class Sanguo
         if(!(node is null)){
             node.SendMessage(this,new SSMessage(to,LocalAddr.LogicAddr,msg),DateTime.Now.AddMilliseconds(1000),null);
         } else {
-            throw new SanguoException($"{to.ToString} not in config");
+            throw new ClusterException($"{to.ToString} not in config");
         }
     }
 

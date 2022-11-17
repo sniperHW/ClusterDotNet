@@ -1,7 +1,7 @@
 ﻿using System;
 using System.Threading;
 using System.Net;
-namespace SanguoDotNet;
+namespace ClusterDotNet;
 
 
 public class Addr 
@@ -25,9 +25,15 @@ public class Addr
         }
     }
 
+    public Addr()
+    {
+        LogicAddr = new LogicAddr();
+        _netAddr = "";        
+    }
+
     public Addr(string logicAddr,string netAddr)
     {   
-        LogicAddr = new(logicAddr);
+        LogicAddr = new LogicAddr(logicAddr);
         _netAddr = netAddr;
     }
 
@@ -35,7 +41,7 @@ public class Addr
     {
         var r = NetAddr.Split(':');
         if(r.Length != 2) {
-            throw new SanguoException("invaild netaddr");
+            throw new ClusterException("invaild netaddr");
         }
         return new IPEndPoint(IPAddress.Parse(r[0]),Convert.ToInt32(r[1]));
     }
@@ -98,6 +104,11 @@ public class LogicAddr : IComparable
     public override int GetHashCode() 
     {
         return base.GetHashCode();
+    }
+
+    public LogicAddr()
+    {
+        _addr = 0;
     }
 
     public LogicAddr(uint addr)
