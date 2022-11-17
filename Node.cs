@@ -435,7 +435,7 @@ internal class Node : DiscoveryNode
 
                 try
                 {
-                    await openReq.WaitAsync(sanguo.cancel.Token);
+                    await openReq.WaitAsync(sanguo.die.Token);
                 }
                 catch(OperationCanceledException)
                 {
@@ -514,7 +514,7 @@ internal class Node : DiscoveryNode
 
     internal async Task<bool> connectAndLogin(Sanguo sanguo,Socket s,bool isStream)
     {
-        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(sanguo.cancel.Token);
+        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(sanguo.die.Token);
         cancellation.CancelAfter(5000);
         try{
             await s.ConnectAsync(Addr.IPEndPoint(),cancellation.Token);
@@ -548,13 +548,13 @@ internal class Node : DiscoveryNode
     {
         Task.Run(async () => {
             for(;;){
-                if(sanguo.cancel.IsCancellationRequested){
+                if(sanguo.die.IsCancellationRequested){
                     return;
                 }
                 Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 var ok = await connectAndLogin(sanguo,s,false);
                 if(ok) {
-                    if(sanguo.cancel.IsCancellationRequested) {
+                    if(sanguo.die.IsCancellationRequested) {
                         s.Close();
                     } else {
                         mtx.WaitOne();

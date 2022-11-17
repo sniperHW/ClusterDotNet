@@ -54,12 +54,12 @@ public class Sanguo
     private RpcClient rpcCli = new RpcClient();
     private RpcServer rpcSvr = new RpcServer();
     private MsgManager msgManager = new MsgManager();
-    private int die = 0;
+    private int stopOnce = 0;
     public  static byte[] SecretKey = Encoding.ASCII.GetBytes("sanguo_2022");
     private SemaphoreSlim waitStop = new SemaphoreSlim(0);
     private Socket? listener;
-    private int started;
-    internal CancellationTokenSource cancel = new CancellationTokenSource();
+    private int startOnce;
+    internal CancellationTokenSource die = new CancellationTokenSource();
     internal Action<Smux.Stream>? fnOnNewStream; 
     internal Node? GetNodeByLogicAddr(LogicAddr addr) 
     {
@@ -119,7 +119,7 @@ public class Sanguo
     }
     private async Task<bool> onNewConnection(Socket s) 
     {
-        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(cancel.Token);
+        using CancellationTokenSource cancellation = CancellationTokenSource.CreateLinkedTokenSource(die.Token);
         cancellation.CancelAfter(1000);
         try{
             using NetworkStream nstream = new(s, ownsSocket: false);
@@ -158,7 +158,9 @@ public class Sanguo
 
             if(loginReq.IsStream) 
             {
-                if(fnOnNewStream is null)
+                Action<Smux.Stream>? onNewStream = Interlocked.Exchange(ref fnOnNewStream,fnOnNewStream);
+
+                if(onNewStream is null)
                 {
                     return false;
                 }
@@ -171,8 +173,8 @@ public class Sanguo
                         {
                             try
                             {
-                                var stream = await streamSvr.AcceptStreamAsync(cancel.Token);
-                                fnOnNewStream(stream);
+                                var stream = await streamSvr.AcceptStreamAsync(die.Token);
+                                onNewStream(stream);
                             }
                             catch(Exception)
                             {
@@ -205,24 +207,19 @@ public class Sanguo
         }
     }
 
+    public void StartSmuxServer(Action<Smux.Stream>? onNewStream)
+    {
+        Interlocked.Exchange(ref fnOnNewStream,onNewStream);
+    }
+
     public void Start(IDiscovery discovery)
     {
-        start(discovery,null);
-    }
-
-    public void Start(IDiscovery discovery,Action<Smux.Stream> onNewStream)
-    {
-        start(discovery,onNewStream);
-    }
-
-    private void start(IDiscovery discovery,Action<Smux.Stream>? onNewStream)
-    {
-        if(Interlocked.CompareExchange(ref started,1,0) == 0){
+        if(Interlocked.CompareExchange(ref startOnce,1,0) == 0){
             try{
                 discovery.Subscribe((DiscoveryNode[] nodeInfo)=>{
                     nodeCache.onNodeUpdate(this,nodeInfo);
                 });
-                nodeCache.WaitInit(cancel.Token);
+                nodeCache.WaitInit(die.Token);
 
                 if(nodeCache.GetNodeByLogicAddr(LocalAddr.LogicAddr) == null)
                 {
@@ -230,7 +227,6 @@ public class Sanguo
                     return;
                 }
 
-                fnOnNewStream = onNewStream;
                 listener = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 listener.Bind(LocalAddr.IPEndPoint());
                 listener.Listen(int.MaxValue);
@@ -240,7 +236,7 @@ public class Sanguo
                 Task.Run(async ()=>{
                     try{    
                         for(;;){
-                            Socket ts = await listener.AcceptAsync(cancel.Token);
+                            Socket ts = await listener.AcceptAsync(die.Token);
                             Console.WriteLine("on new client");
                             await Task.Run(async ()=>{
                                 var ok = await onNewConnection(ts); 
@@ -266,8 +262,8 @@ public class Sanguo
 
     public void Stop()
     {
-        if(Interlocked.CompareExchange(ref die,1,0) == 0){
-            cancel.Cancel();
+        if(Interlocked.CompareExchange(ref stopOnce,1,0) == 0){
+            die.Cancel();
             listener?.Close();
             nodeCache.Stop();
             waitStop.Release();
