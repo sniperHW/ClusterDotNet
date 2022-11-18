@@ -90,7 +90,8 @@ public class ClusterNode
             return handler;            
         }
     }
-
+    static private ClusterNode instance = new ClusterNode();
+    static public ClusterNode Instance{get=>instance;}
     private Addr localAddr;
     public Addr LocalAddr{get=>localAddr;}
     private NodeCache nodeCache;
@@ -102,6 +103,7 @@ public class ClusterNode
     private SemaphoreSlim waitStop = new SemaphoreSlim(0);
     private Socket? listener;
     private int startOnce;
+    private bool started = false;
     internal CancellationTokenSource die = new CancellationTokenSource();
     internal Action<Smux.Stream>? fnOnNewStream; 
     internal Node? GetNodeByLogicAddr(LogicAddr addr) 
@@ -130,7 +132,7 @@ public class ClusterNode
         });   
     }
 
-    public void DispatchMsg(SSMessage m)
+    internal void DispatchMsg(SSMessage m)
     {
         Action<LogicAddr,IMessage>? handler = msgManager.GetHandler(m.Cmd);
         if(!(handler is null))
@@ -139,12 +141,12 @@ public class ClusterNode
         }
     }
 
-    public void OnRpcResponse(Rpc.Proto.rpcResponse resp)
+    internal void OnRpcResponse(Rpc.Proto.rpcResponse resp)
     {
         rpcCli.OnMessage(resp);
     }   
 
-    public void OnRpcRequest(RpcChannelI channel, Rpc.Proto.rpcRequest req)
+    internal void OnRpcRequest(RpcChannelI channel, Rpc.Proto.rpcRequest req)
     {
         rpcSvr.OnMessage(channel,req);
     }
@@ -289,6 +291,7 @@ public class ClusterNode
                         return;
                     }
                 });
+                started = true;
             }
             catch(Exception e) 
             {
@@ -300,6 +303,11 @@ public class ClusterNode
 
     public void Stop()
     {
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        }
+
         if(Interlocked.CompareExchange(ref stopOnce,1,0) == 0){
             die.Cancel();
             listener?.Close();
@@ -310,11 +318,23 @@ public class ClusterNode
 
     public void Wait() 
     {
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        }         
         waitStop.Wait();
     }
 
     public LogicAddr? GetAddrByType(uint tt,int num=0)
     {
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        } 
+        else if (die.IsCancellationRequested)
+        {
+            throw new ClusterException("server die");
+        }
         Node? node = nodeCache.GetNodeByType(tt,num);
         if(node is null) {
             return null;
@@ -325,6 +345,15 @@ public class ClusterNode
 
     public Task<Smux.Stream> OpenStreamAsync(LogicAddr to)
     {
+
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        } 
+        else if (die.IsCancellationRequested)
+        {
+            throw new ClusterException("server die");
+        }
 
         if(to == LocalAddr.LogicAddr)
         {
@@ -344,6 +373,16 @@ public class ClusterNode
 
     public void SendMessage(LogicAddr to,IMessage msg) 
     {
+
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        } 
+        else if (die.IsCancellationRequested)
+        {
+            throw new ClusterException("server die");
+        }   
+
         Node? node = nodeCache.GetNodeByLogicAddr(to);
         if(!(node is null)){
             node.SendMessage(this,new SSMessage(to,LocalAddr.LogicAddr,msg),DateTime.Now.AddMilliseconds(1000),null);
@@ -355,6 +394,15 @@ public class ClusterNode
     //单向调用，不接收返回值
     public void Call<Arg>(LogicAddr to,string method,Arg arg) where Arg : IMessage<Arg>
     {
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        } 
+        else if (die.IsCancellationRequested)
+        {
+            throw new ClusterException("server die");
+        }
+
         if(to == LocalAddr.LogicAddr){
             rpcCli.Call<Arg>(new selfChannel(this),method,arg);
         } else {
@@ -367,6 +415,16 @@ public class ClusterNode
 
     public Ret Call<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
+
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        } 
+        else if (die.IsCancellationRequested)
+        {
+            throw new ClusterException("server die");
+        }
+
         if(to == LocalAddr.LogicAddr){
             return rpcCli.Call<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
         } else {
@@ -381,6 +439,16 @@ public class ClusterNode
 
     public Task<Ret> CallAsync<Ret,Arg>(LogicAddr to,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
+
+        if(!started)
+        {
+            throw new ClusterException("server not start");
+        } 
+        else if (die.IsCancellationRequested)
+        {
+            throw new ClusterException("server die");
+        }
+
         if(to == LocalAddr.LogicAddr){
             return rpcCli.CallAsync<Ret,Arg>(new selfChannel(this),method,arg,cancellationToken);
         } else {
