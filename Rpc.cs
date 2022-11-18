@@ -190,7 +190,7 @@ internal class RpcClient
     {
         private Rpc.Proto.rpcResponse? _response = null;
 
-        public  Rpc.Proto.rpcResponse? Response{get=> Interlocked.Exchange(ref _response,null);}
+        public  Rpc.Proto.rpcResponse? Response{get=> Interlocked.Exchange(ref _response,_response);}
 
         public ulong Seq{get;}
 
@@ -238,74 +238,78 @@ internal class RpcClient
         channel.SendRequest(makeRequest<Arg>(method,arg,true),DateTime.Now.AddMilliseconds(1000));
     }
 
-    private Ret onResponse<Ret>(callContext context,Exception? e) where Ret : IMessage<Ret>,new()
-    {
-        var resp = context.Response;
-        if(resp is null) {
-            mtx.WaitOne();
-            pendingCall.Remove(context.Seq);
-            mtx.ReleaseMutex();
-            if(e is OperationCanceledException) {
-                //无法区分cancel原因，统一按超时处理
-                throw new RpcException("ErrTimeout",RpcError.ErrTimeout);
-            } else if(e is null) {
-                throw new Exception("resp should not be null");
-            } else {
-                throw e;
-            }
-
-        } else if(resp.ErrCode == 0) {
-            Ret ret = new Ret();
-            RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
-            return ret;
-        } else {
-            throw new RpcException(resp.ErrDesc,resp.ErrCode);
-        }
-    }
-
     internal Ret Call<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
-
         var request = makeRequest<Arg>(method,arg,false);
-
         callContext context = new callContext(request.Seq);
         mtx.WaitOne();
         pendingCall[request.Seq] = context;
         mtx.ReleaseMutex();
 
-        Exception? e = null;
         try{
             channel.SendRequest(request,cancellationToken);
             context.Wait(cancellationToken);
         }
-        catch(Exception ee)
+        catch(Exception)
         {
-            e = ee;
+            mtx.WaitOne();
+            pendingCall.Remove(context.Seq);
+            mtx.ReleaseMutex();
+            throw;
         }
 
-        return onResponse<Ret>(context,e);
+        if (context.Response is null)
+        {
+            throw new Exception("resp should not be null");
+        } 
+        else 
+        {
+            var resp = context.Response;
+            if(resp.ErrCode == 0) {
+                Ret ret = new Ret();
+                RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
+                return ret;
+            } else {
+                throw new RpcException(resp.ErrDesc,resp.ErrCode);
+            }
+        }
     }
 
     internal async Task<Ret> CallAsync<Ret,Arg>(RpcChannelI channel,string method,Arg arg,CancellationToken cancellationToken) where Arg : IMessage<Arg> where Ret : IMessage<Ret>,new()
     {
         var request = makeRequest<Arg>(method,arg,false);
-
         callContext context = new callContext(request.Seq);
         mtx.WaitOne();
         pendingCall[request.Seq] = context;
         mtx.ReleaseMutex();
 
-
-        Exception? e = null;
         try{
             channel.SendRequest(request,cancellationToken);
             await context.WaitAsync(cancellationToken);
         } 
-        catch(Exception ee)
+        catch(Exception)
         {
-            e = ee;
+            mtx.WaitOne();
+            pendingCall.Remove(context.Seq);
+            mtx.ReleaseMutex();
+            throw;
         }
-        return onResponse<Ret>(context,e);
+
+        if (context.Response is null)
+        {
+            throw new Exception("resp should not be null");
+        } 
+        else 
+        {
+            var resp = context.Response;
+            if(resp.ErrCode == 0) {
+                Ret ret = new Ret();
+                RpcCodec.Codec.Decode(resp.Ret.ToByteArray(),ret);
+                return ret;
+            } else {
+                throw new RpcException(resp.ErrDesc,resp.ErrCode);
+            }
+        }
     }
 
     internal void OnMessage(Rpc.Proto.rpcResponse respMsg)
