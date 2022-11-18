@@ -178,8 +178,7 @@ public class ClusterNode
                 return false;
             }
 
-            using MemoryStream jsonstream = new MemoryStream(AES.CbcDecrypt(SecretKey,data));
-            var ret = JsonSerializer.Deserialize(jsonstream,typeof(SSLoginReq));
+            var ret = JsonSerializer.Deserialize(Encoding.UTF8.GetString(AES.CbcDecrypt(SecretKey,data)),typeof(SSLoginReq));
             if(ret == null || !(ret is SSLoginReq))
             {
                 return false;

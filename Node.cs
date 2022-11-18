@@ -518,12 +518,13 @@ internal class Node : DiscoveryNode
         cancellation.CancelAfter(5000);
         try{
             await s.ConnectAsync(Addr.IPEndPoint(),cancellation.Token);
-            using MemoryStream jsonStream = new MemoryStream();
-            JsonSerializer.Serialize(jsonStream,new SSLoginReq(self.LocalAddr.LogicAddr.ToUint32(),self.LocalAddr.NetAddr,isStream) ,typeof(SSLoginReq));
-            var encryptJson = AES.CbcEncrypt(ClusterNode.SecretKey,jsonStream.ToArray());
+            
+            var jsonStr = JsonSerializer.Serialize(new SSLoginReq(self.LocalAddr.LogicAddr.ToUint32(),self.LocalAddr.NetAddr,isStream) ,typeof(SSLoginReq));
+            var encryptJson = AES.CbcEncrypt(ClusterNode.SecretKey,Encoding.UTF8.GetBytes(jsonStr));
             using MemoryStream mstream = new MemoryStream(new byte[4+encryptJson.Length]);
             mstream.Write(BitConverter.GetBytes(Endian.Big(encryptJson.Length)));
             mstream.Write(encryptJson);
+
             var data = mstream.ToArray();  
             using NetworkStream nstream = new(s, ownsSocket: false);
             await nstream.WriteAsync(data,0,data.Length,cancellation.Token);
