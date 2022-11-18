@@ -68,7 +68,7 @@ internal class NodeCache
         semaphore.Wait(cancellationToken);
     }
 
-    public void AddNodeByType(Node n)
+    private void AddNodeByType(Node n)
     {
         if(this.nodeByType.ContainsKey(n.Addr.LogicAddr.Type())) {
             ArrayList nodeByType = this.nodeByType[n.Addr.LogicAddr.Type()];
@@ -80,7 +80,7 @@ internal class NodeCache
         }
     }
 
-    public void RemoveNodeByType(Node n)
+    private void RemoveNodeByType(Node n)
     {
         if(this.nodeByType.ContainsKey(n.Addr.LogicAddr.Type())) {
             ArrayList nodeByType = this.nodeByType[n.Addr.LogicAddr.Type()];
@@ -94,7 +94,7 @@ internal class NodeCache
         }
     }
 
-    public void AddHarborsByCluster(Node n)
+    private void AddHarborsByCluster(Node n)
     {
         if(this.harborsByCluster.ContainsKey(n.Addr.LogicAddr.Cluster())) {
             ArrayList harborsByCluster = this.harborsByCluster[n.Addr.LogicAddr.Cluster()];
@@ -106,7 +106,7 @@ internal class NodeCache
         }
     }
 
-    public void RemoveHarborsByCluster(Node n)
+    private void RemoveHarborsByCluster(Node n)
     {
         if(this.harborsByCluster.ContainsKey(n.Addr.LogicAddr.Cluster())) {
             ArrayList harborsByCluster = this.harborsByCluster[n.Addr.LogicAddr.Cluster()];
@@ -122,14 +122,12 @@ internal class NodeCache
 
     public Node? GetHarborByCluster(uint cluster,LogicAddr m)
     {
-        mtx.WaitOne();
+        using var guard = new LockGuard(mtx);
         if(!harborsByCluster.ContainsKey(cluster)){
-            mtx.ReleaseMutex();
             return null;
         } else {
             ArrayList harbors = harborsByCluster[cluster];
             var n = (Node?)harbors[rnd.Next(0,harbors.Count)];
-            mtx.ReleaseMutex();
             return n;
         }
     }
@@ -137,9 +135,8 @@ internal class NodeCache
     public Node? GetNodeByType(uint tt,int num)
     {
 
-        mtx.WaitOne();
+        using var guard = new LockGuard(mtx);
         if(!nodeByType.ContainsKey(tt)) {
-            mtx.ReleaseMutex();
             return null;
         } else {
             ArrayList nodes = nodeByType[tt];
@@ -149,8 +146,6 @@ internal class NodeCache
             } else {
                 n = (Node?)nodes[num%nodes.Count];
             }
-            
-            mtx.ReleaseMutex();
             return n;            
         }       
     }

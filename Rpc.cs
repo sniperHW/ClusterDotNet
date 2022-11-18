@@ -314,14 +314,12 @@ internal class RpcClient
 
     internal void OnMessage(Rpc.Proto.rpcResponse respMsg)
     {
-        mtx.WaitOne();
+        using var guard = new LockGuard(mtx);
         if(pendingCall.ContainsKey(respMsg.Seq)) {
             callContext ctx = pendingCall[respMsg.Seq];
             pendingCall.Remove(respMsg.Seq);
-            mtx.ReleaseMutex();
             ctx.OnResponse(respMsg);
         } else {
-            mtx.ReleaseMutex();
             Console.WriteLine($"got response but not context seqno:{respMsg.Seq}");
         }
     }

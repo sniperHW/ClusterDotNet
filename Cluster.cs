@@ -25,31 +25,6 @@ public class SSLoginReq {
 }
 
 
-public class Once
-{
-    private bool done = false;
-    private Mutex mtx = new Mutex();
-
-    public void Do(Action fn)
-    {
-        if(done)
-        {
-            return;
-        }
-        else 
-        {
-            mtx.WaitOne();
-            if(!done)
-            {
-                fn();
-                done = true;
-            }
-            mtx.ReleaseMutex();
-        }
-    }
-}
-
-
 public class ClusterException : Exception
 {
     public string Msg{get;}
