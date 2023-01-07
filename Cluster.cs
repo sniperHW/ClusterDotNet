@@ -45,23 +45,25 @@ public class ClusterNode
 {
     private class MsgManager 
     {
-        private Mutex mtx = new Mutex();
+        private readonly object mtx = new object();
 
         private Dictionary<ushort,Action<LogicAddr,IMessage>> handlers = new Dictionary<ushort,Action<LogicAddr,IMessage>>();
 
         public void Register(ushort cmd,Action<LogicAddr,IMessage> func)
         {
-            mtx.WaitOne();
-            handlers[cmd] = func;
-            mtx.ReleaseMutex();
+            lock(mtx)
+            {
+                handlers[cmd] = func;
+            }
         }
 
         public Action<LogicAddr,IMessage>? GetHandler(ushort cmd)
         {
             Action<LogicAddr,IMessage>? handler = null;
-            mtx.WaitOne();
-            handler = handlers[cmd];
-            mtx.ReleaseMutex();
+            lock(mtx)
+            {
+                handler = handlers[cmd];
+            }
             return handler;            
         }
     }

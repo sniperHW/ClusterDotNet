@@ -374,7 +374,7 @@ public class RpcReplyer<Ret> where Ret : IMessage<Ret>
 
 internal class RpcServer
 {
-    private Mutex mtx = new Mutex();
+    private readonly object mtx = new object();
 
     private Dictionary<string,Action<RpcChannelI,Rpc.Proto.rpcRequest>> methods = new Dictionary<string,Action<RpcChannelI,Rpc.Proto.rpcRequest>>();
 
@@ -392,42 +392,43 @@ internal class RpcServer
 
     public void Register<Arg,Ret>(string method,Action<RpcReplyer<Ret>,Arg> serviceFunc) where Arg : IMessage<Arg>,new() where Ret : IMessage<Ret>
     {
-
-        mtx.WaitOne();
-        if(methods.ContainsKey(method))
-        {   
-            mtx.ReleaseMutex();
-            throw new ClusterException("duplicate rpc method");
-        }
-
-        methods[method] = (RpcChannelI channel,Rpc.Proto.rpcRequest req) =>
+        lock(mtx) 
         {
-            try{
-                Arg arg = new Arg();
-                RpcCodec.Codec.Decode(req.Arg.ToByteArray(),arg);
-                RpcReplyer<Ret> replyer = new RpcReplyer<Ret>(channel,req.Seq,req.Oneway);
-                serviceFunc(replyer,arg);
-            }catch(Exception e)
-            {
-                Console.WriteLine(e);
-                if(!req.Oneway){
-                    Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
-                    resp.Seq = req.Seq;
-                    resp.ErrCode = RpcError.ErrMethod;
-                    resp.ErrDesc = e.ToString();
-                    channel.Reply(resp);
-                }    
+            if(methods.ContainsKey(method))
+            {   
+                throw new ClusterException("duplicate rpc method");
+            } else {
+                methods[method] = (RpcChannelI channel,Rpc.Proto.rpcRequest req) =>
+                {
+                    try{
+                        Arg arg = new Arg();
+                        RpcCodec.Codec.Decode(req.Arg.ToByteArray(),arg);
+                        RpcReplyer<Ret> replyer = new RpcReplyer<Ret>(channel,req.Seq,req.Oneway);
+                        serviceFunc(replyer,arg);
+                    }catch(Exception e)
+                    {
+                        Console.WriteLine(e);
+                        if(!req.Oneway){
+                            Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
+                            resp.Seq = req.Seq;
+                            resp.ErrCode = RpcError.ErrMethod;
+                            resp.ErrDesc = e.ToString();
+                            channel.Reply(resp);
+                        }    
+                    }
+                };                
             }
-        };
-        mtx.ReleaseMutex();
+        }
     }
 
     public void OnMessage(RpcChannelI channel,Rpc.Proto.rpcRequest req)
     {
         Action<RpcChannelI,Rpc.Proto.rpcRequest>? serviceFunc;
-        mtx.WaitOne();
-        serviceFunc = methods[req.Method];
-        mtx.ReleaseMutex();
+        lock(mtx)
+        {
+            serviceFunc = methods[req.Method];
+        }
+        
         if(serviceFunc is null){
             Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
             resp.Seq = req.Seq;

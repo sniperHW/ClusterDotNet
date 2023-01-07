@@ -20,7 +20,7 @@ public class LockGuard : IDisposable
 public class Once
 {
     private bool done = false;
-    private Mutex mtx = new Mutex();
+    private readonly object mtx = new object();
 
     public void Do(Action fn)
     {
@@ -30,11 +30,13 @@ public class Once
         }
         else 
         {
-            using var guard = new LockGuard(mtx);
-            if(!done)
+            lock(mtx)
             {
-                fn();
-                done = true;
+                if(!done)
+                {
+                    fn();
+                    done = true;
+                }                
             }
         }
     }
