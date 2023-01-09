@@ -219,7 +219,7 @@ internal class RpcClient
     
     private ulong nextSeqno = 0;
 
-    private Mutex mtx = new Mutex();
+    private readonly object mtx = new object();
 
     private Dictionary<ulong,callContext> pendingCall = new Dictionary<ulong,callContext>();
 
@@ -242,19 +242,20 @@ internal class RpcClient
     {
         var request = makeRequest<Arg>(method,arg,false);
         callContext context = new callContext(request.Seq);
-        mtx.WaitOne();
-        pendingCall[request.Seq] = context;
-        mtx.ReleaseMutex();
-
+        lock(mtx)
+        {
+            pendingCall[request.Seq] = context;
+        }
         try{
             channel.SendRequest(request,cancellationToken);
             context.Wait(cancellationToken);
         }
         catch(Exception)
         {
-            mtx.WaitOne();
-            pendingCall.Remove(context.Seq);
-            mtx.ReleaseMutex();
+            lock(mtx)
+            {
+                pendingCall.Remove(context.Seq);
+            }
             throw;
         }
 
@@ -279,9 +280,10 @@ internal class RpcClient
     {
         var request = makeRequest<Arg>(method,arg,false);
         callContext context = new callContext(request.Seq);
-        mtx.WaitOne();
-        pendingCall[request.Seq] = context;
-        mtx.ReleaseMutex();
+        lock(mtx)
+        {
+            pendingCall[request.Seq] = context;
+        }
 
         try{
             channel.SendRequest(request,cancellationToken);
@@ -289,9 +291,10 @@ internal class RpcClient
         } 
         catch(Exception)
         {
-            mtx.WaitOne();
-            pendingCall.Remove(context.Seq);
-            mtx.ReleaseMutex();
+            lock(mtx)
+            {
+                pendingCall.Remove(context.Seq);
+            }
             throw;
         }
 
@@ -314,13 +317,15 @@ internal class RpcClient
 
     internal void OnMessage(Rpc.Proto.rpcResponse respMsg)
     {
-        using var guard = new LockGuard(mtx);
-        if(pendingCall.ContainsKey(respMsg.Seq)) {
-            callContext ctx = pendingCall[respMsg.Seq];
-            pendingCall.Remove(respMsg.Seq);
-            ctx.OnResponse(respMsg);
-        } else {
-            Console.WriteLine($"got response but not context seqno:{respMsg.Seq}");
+        lock(mtx)
+        {
+            if(pendingCall.ContainsKey(respMsg.Seq)) {
+                callContext ctx = pendingCall[respMsg.Seq];
+                pendingCall.Remove(respMsg.Seq);
+                ctx.OnResponse(respMsg);
+            } else {
+                Console.WriteLine($"got response but not context seqno:{respMsg.Seq}");
+            }
         }
     }
 }

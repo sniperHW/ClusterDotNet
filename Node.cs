@@ -356,16 +356,17 @@ internal class Node : DiscoveryNode
             }
         } 
 
-        private Mutex mtx = new Mutex();
+        private readonly object mtx = new object();
         private LinkedList<OpenRequest> openReqs = new LinkedList<OpenRequest>();
         private Smux.Session? smuxSession = null;
         public void Close()
         {
             Smux.Session? session = null;
-            mtx.WaitOne();
-            session = smuxSession;
-            smuxSession = null;
-            mtx.ReleaseMutex();
+            lock(mtx)
+            {
+                session = smuxSession;
+                smuxSession = null;
+            }
             if(session != null)
             {
                 session.Close();   
@@ -379,24 +380,34 @@ internal class Node : DiscoveryNode
                 var ok = await node.connectAndLogin(self,s,false);
                 if(!ok)
                 {   
-                    mtx.WaitOne();
                     var e = new ClusterException("connect failed");
+                    LinkedList<OpenRequest> openReqs;
+                    lock(mtx)
+                    {
+                        openReqs = this.openReqs;
+                        this.openReqs = new LinkedList<OpenRequest>();
+                    }
+
                     for(var node = openReqs.First;node != null;)
                     {
                         var req = node.Value;
                         openReqs.RemoveFirst();
                         req.OnOpenResponse(null,e);
                     }
-                    mtx.ReleaseMutex();
                 }
                 else
                 {
-                    mtx.WaitOne();
-                    var openReqs = this.openReqs;
-                    this.openReqs = new LinkedList<OpenRequest>();
-                    smuxSession = Smux.Session.Client(new NetworkStream(s,ownsSocket: true),new Smux.Config());
-                    var session = smuxSession;
-                    mtx.ReleaseMutex();
+
+                    Smux.Session session;
+                    LinkedList<OpenRequest> openReqs;
+                    lock(mtx)
+                    {
+                        openReqs = this.openReqs;
+                        this.openReqs = new LinkedList<OpenRequest>();
+                        smuxSession = Smux.Session.Client(new NetworkStream(s,ownsSocket: true),new Smux.Config());
+                        session = smuxSession;
+                    }
+
                     for(var node = openReqs.First;node != null;)
                     {
                         var req = node.Value;
@@ -418,17 +429,24 @@ internal class Node : DiscoveryNode
 
         public async Task<Smux.Stream> OpenStreamAsync(ClusterNode self,Node node)
         {
-            mtx.WaitOne();
-            if(smuxSession is null)
-            {
-                var openReq = new OpenRequest();
-                openReqs.AddLast(openReq);
-                if(openReqs.Count == 1)
-                {
-                    dial(self,node);
-                }
-                mtx.ReleaseMutex();
 
+            Smux.Session? sess = null;
+            var openReq = new OpenRequest();
+            lock(mtx)
+            {   
+                sess = smuxSession;
+                if(sess is null)
+                {
+                    openReqs.AddLast(openReq);
+                    if(openReqs.Count == 1)
+                    {
+                        dial(self,node);
+                    }                
+                }
+            }
+
+            if(sess is null)
+            {
                 try
                 {
                     await openReq.WaitAsync(self.die.Token);
@@ -442,24 +460,20 @@ internal class Node : DiscoveryNode
                 {
                     throw new ClusterException("connect failed");
                 }
-                else 
-                {
-                    return openReq.stream;
-                }
-            } 
+            }
             else 
             {
-                var session = smuxSession;
-                mtx.ReleaseMutex();
-                return await session.OpenStreamAsync();
+                openReq.stream = await sess.OpenStreamAsync();
             }
+
+            return openReq.stream;
         }
     }
     
 
     private LinkedList<pendingMessage> pendingMsg = new LinkedList<pendingMessage>();
     private Session? session = null;
-    private Mutex mtx = new Mutex();
+    private readonly object mtx = new object();
     private StreamClient streamCli = new StreamClient();
 
     public Node(Addr addr,bool available,bool export):base(addr,available,export)
@@ -469,12 +483,13 @@ internal class Node : DiscoveryNode
 
     public void closeSession()
     {
-        mtx.WaitOne();
-        if(!(session is null)){
-            session.Close();
-            session = null;
+        lock(mtx)
+        {
+            if(!(session is null)){
+                session.Close();
+                session = null;
+            }
         }
-        mtx.ReleaseMutex();
         streamCli.Close();
     }   
 
@@ -549,26 +564,28 @@ internal class Node : DiscoveryNode
                     return;
                 }
                 Socket s = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
-                var ok = await connectAndLogin(self,s,false);
-                if(ok) {
+                if(await connectAndLogin(self,s,false)) {
                     if(self.die.IsCancellationRequested) {
                         s.Close();
                     } else {
-                        mtx.WaitOne();
-                        onEstablish(self,s);
-                        mtx.ReleaseMutex();
+                        lock(mtx)
+                        {
+                            onEstablish(self,s);
+                        }
                     }
                     return;
                 } else {
-                    mtx.WaitOne();
-                    clearPendingMsg();
-                    if(pendingMsg.Count == 0) {
-                        mtx.ReleaseMutex();
+                    var pendingCount = 0;
+                    
+                    lock(mtx)
+                    {
+                        clearPendingMsg();
+                        pendingCount = pendingMsg.Count;
+                    }
+
+                    if(pendingCount==0){
                         return;
-                    } else {
-                        mtx.ReleaseMutex();
-                        continue;
-                    }                    
+                    }                  
                 }
             }
         });         
@@ -576,24 +593,23 @@ internal class Node : DiscoveryNode
 
     public void SendMessage(ClusterNode self,ISSMsg msg,DateTime? deadline,CancellationToken? cancellationToken)
     {
-        try {
-            mtx.WaitOne();
-            if(!(session is null)) {
-                session.Send(msg);        
-            } else {
-                pendingMsg.AddLast(new pendingMessage(msg,deadline,cancellationToken));
-                if(pendingMsg.Count == 1){
-                    dial(self);
-                }
-            } 
-        }
-        catch(Exception e)
+
+        lock(mtx)
         {
-            Console.WriteLine(e);
-        }
-        finally
-        {
-            mtx.ReleaseMutex();
+            try {
+                if(!(session is null)) {
+                    session.Send(msg);        
+                } else {
+                    pendingMsg.AddLast(new pendingMessage(msg,deadline,cancellationToken));
+                    if(pendingMsg.Count == 1){
+                        dial(self);
+                    }
+                } 
+            }
+            catch(Exception e)
+            {
+                Console.WriteLine(e);
+            }
         }
     }
 
@@ -635,24 +651,26 @@ internal class Node : DiscoveryNode
     public bool CheckConnection(ClusterNode self)
     {        
         var ok = true;
-        mtx.WaitOne();
-        if(pendingMsg.Count != 0) {
-            if(self.LocalAddr.LogicAddr.ToUint32() < Addr.LogicAddr.ToUint32()){
+        lock(mtx)
+        {
+            if(pendingMsg.Count != 0) {
+                if(self.LocalAddr.LogicAddr.ToUint32() < Addr.LogicAddr.ToUint32()){
+                    ok = false;
+                }
+
+            } else if (session != null) {
                 ok = false;
             }
-
-        } else if (session != null) {
-            ok = false;
         }
-        mtx.ReleaseMutex();
         return ok;
     }
 
     public void OnEstablish(ClusterNode self,Socket s)
     {   
-        mtx.WaitOne();
-        onEstablish(self,s);
-        mtx.ReleaseMutex();
+        lock(mtx)
+        {
+            onEstablish(self,s);
+        }
     }
 
     private void onEstablish(ClusterNode self,Socket s) 
@@ -661,9 +679,10 @@ internal class Node : DiscoveryNode
         var msgReveiver = new MessageReceiver(MessageConstont.MaxPacketSize,codec);
         session = new Session(s);
         session.SetCloseCallback((Session s) => {
-            mtx.WaitOne();
-            session = null;
-            mtx.ReleaseMutex();
+            lock(mtx)
+            {
+                session = null;
+            }
         });
         session.Start(msgReveiver,(Session s,Object packet) => {
             if(packet is ISSMsg) {
