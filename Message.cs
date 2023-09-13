@@ -116,13 +116,206 @@ public class MessageConstont
 	public static  readonly int MinSize       = SizeLen + SizeFlag + SizeToAndFrom;
 
 
-    public static  readonly int Msg             = 0x8; 
-	public static  readonly int RpcReq          = 0x10; 
-	public static  readonly int RpcResp         = 0x18; 
-	public static  readonly int MaskMessageType = 0x38;
-	public static  readonly int MaxPacketSize   = 1024 * 1024 * 4;
-
+    public static  readonly int PbMsg             = 0x1; 
+    public static  readonly int BinMsg            = 0x2; 
+	public static  readonly int RpcReq            = 0x3; 
+	public static  readonly int RpcResp           = 0x4; 
+	public static  readonly int MaskMessageType   = 0x7;
+	public static  readonly int MaxPacketSize     = 1024 * 1024 * 4;
 }
+
+public class RPCMessageConstont 
+{
+    public static  readonly int LenSeq       = 8; 
+	public static  readonly int LenOneWay    = 1;
+    public static readonly  int LenMethod    = 2;
+    public static readonly int MaxMethodLen = 65535;
+    public static readonly int ReqHdrLen = LenSeq + LenOneWay + LenMethod; // seq + oneway + len(method)
+    public static readonly int MaxErrStrLen = 65535;
+    public static readonly int LenErrCode = 2;
+    public static readonly int RespHdrLen = LenSeq + LenErrCode; //seq + Error.Err.Code
+    public static readonly int LenErrStr = 2;
+}
+
+public class rpcRequest 
+{
+    public ulong Seq{get;set;}
+
+    public bool   Oneway{get;set;}
+
+    public string  Method{get;set;}
+
+    public byte[]  Arg{get;set;}
+
+    public rpcRequest()
+    {
+        Method="";
+        Arg=new byte[0];
+    }
+
+    public rpcRequest(ulong seq,bool oneway,string method,byte[] arg)
+    {
+        if(method.Length > RPCMessageConstont.MaxMethodLen)
+        {
+            throw new ClusterException("method too large");
+        }
+
+        Seq = seq;
+        Oneway = oneway;
+        Method = method;
+        Arg = arg;
+    }
+
+    //编码后的二进制大小
+    public int EncodeLen() 
+    {
+        return  RPCMessageConstont.ReqHdrLen + Method.Length + Arg.Length;       
+    }
+    public void Encode(MemoryStream stream)
+    {
+        stream.Write(BitConverter.GetBytes(Endian.Big(Seq)));
+        if(Oneway) {
+            stream.WriteByte((byte)(1));
+        }
+        else 
+        {
+            stream.WriteByte((byte)(0));            
+        }
+        stream.Write(BitConverter.GetBytes(Endian.Big((short)Method.Length)));
+        stream.Write(System.Text.Encoding.ASCII.GetBytes(Method));  
+        stream.Write(Arg);     
+    }
+
+    public void Decode(byte[] buff,int offset,int endpos)
+    {
+        if(endpos - offset >= 8) 
+        {
+            Seq = Endian.Big((ulong)BitConverter.ToInt64(buff, offset));
+            offset += 8;
+        }
+
+        if(endpos - offset >= 1) 
+        {
+            Oneway = (int)buff[offset] == 1;
+            offset += 1;
+        }
+
+        if(endpos - offset >= 2) 
+        {
+            int lenMthod = (int)Endian.Big((short)BitConverter.ToUInt16(buff, offset));
+            offset += 2;
+            if(endpos - offset >= lenMthod) {
+                char[] asciiChars = new char[System.Text.Encoding.ASCII.GetCharCount(buff, offset, lenMthod)];
+                System.Text.Encoding.ASCII.GetChars(buff, offset, lenMthod, asciiChars, 0);
+                Method = new string(asciiChars);
+                offset += lenMthod;       
+            }
+        }
+
+        if(endpos - offset > 0)
+        {
+            Arg = new byte[buff.Length - offset];
+            Array.Copy(buff,offset,Arg,0,endpos-offset);
+        }
+    }
+}
+
+
+public class rpcResponse
+{
+    public ulong  Seq{get;set;}
+
+    public short  ErrCode{get;set;}
+
+    public string ErrStr{get;set;}
+
+    public byte[] Ret{get;set;}
+
+
+    public rpcResponse()
+    {
+        ErrStr = "";
+        Ret = new byte[0];
+    }
+
+    public rpcResponse(ulong seq,byte[] ret) 
+    {
+        Seq = seq;
+        Ret = ret;
+        ErrStr = "";
+    }    
+
+    public rpcResponse(ulong seq,short errCode,string errStr)
+    {
+        Seq = seq;
+        ErrCode = errCode;
+        ErrStr = errStr;
+        Ret = new byte[0];
+    }
+
+    public int EncodeLen() 
+    {
+        if(ErrCode == 0)
+        {
+            return RPCMessageConstont.RespHdrLen + Ret.Length;
+        } 
+        else 
+        {
+            return RPCMessageConstont.RespHdrLen + RPCMessageConstont.LenErrStr + ErrStr.Length;
+        }     
+    }
+
+    public void Encode(MemoryStream stream)
+    {
+        stream.Write(BitConverter.GetBytes(Endian.Big(Seq)));
+        stream.Write(BitConverter.GetBytes(Endian.Big((short)ErrCode)));
+        if(ErrCode == 0)
+        {
+            stream.Write(Ret);
+        }
+        else 
+        {
+            stream.Write(BitConverter.GetBytes(Endian.Big((short)ErrStr.Length)));
+            stream.Write(System.Text.Encoding.ASCII.GetBytes(ErrStr)); 
+        }
+    }
+
+    public void Decode(byte[] buff,int offset,int endpos)
+    {
+        if(endpos - offset >= 8) 
+        {
+            Seq = Endian.Big((ulong)BitConverter.ToInt64(buff, offset));
+            offset += 8;
+        }
+
+        if(endpos - offset >= 2)
+        {
+            ErrCode = Endian.Big((short)BitConverter.ToUInt16(buff, offset));
+            offset += 2;
+        }
+
+        if(ErrCode == 0)
+        {
+            if(endpos - offset > 0)
+            {
+                Ret = new byte[endpos - offset];
+                Array.Copy(buff,offset,Ret,0,endpos-offset);
+            }    
+        } 
+        else 
+        {
+            int lenErrStr = (int)Endian.Big((short)BitConverter.ToUInt16(buff, offset));
+            offset += 2;
+            if(endpos - offset >= lenErrStr) {
+                char[] asciiChars = new char[System.Text.Encoding.ASCII.GetCharCount(buff, offset, lenErrStr)];
+                System.Text.Encoding.ASCII.GetChars(buff, offset, lenErrStr, asciiChars, 0);
+                ErrStr = new string(asciiChars);     
+            }
+        }
+    }
+}
+
+
 
 public class SSMessage : ISSMsg
 {
@@ -139,7 +332,7 @@ public class SSMessage : ISSMsg
         var position1 = stream.Position;
         try{
             stream.Write(BitConverter.GetBytes(0));//写入占位符
-            byte flag = (byte)(0 | MessageConstont.Msg);
+            byte flag = (byte)(0 | MessageConstont.PbMsg);
             stream.WriteByte(flag);
             stream.Write(BitConverter.GetBytes(Endian.Big((int)To.ToUint32())));
             stream.Write(BitConverter.GetBytes(Endian.Big((int)From.ToUint32())));
@@ -188,14 +381,13 @@ public class RelayMessage : ISSMsg
 
     public byte[] Payload{get;}
 
-    public Rpc.Proto.rpcRequest? GetRpcRequest(){
+    public rpcRequest? GetRpcRequest(){
         if(((int)Payload[0] & MessageConstont.MaskMessageType) != MessageConstont.RpcReq){
             try
             {
                 var offset = MessageConstont.SizeLen + MessageConstont.SizeFlag;
-                using MemoryStream memoryStream = new MemoryStream(Payload, offset, Payload.Length - offset);
-                Rpc.Proto.rpcRequest req = new Rpc.Proto.rpcRequest();
-                req.MergeFrom(memoryStream); 
+                rpcRequest req = new rpcRequest();
+                req.Decode(Payload,offset,Payload.Length);
                 return req;
             }
             catch (Exception)
@@ -236,9 +428,9 @@ public class RpcRequestMessage : ISSMsg
 
     public LogicAddr From{get;}
 
-    public  Rpc.Proto.rpcRequest Req{get;}
+    public rpcRequest Req{get;}
 
-    public RpcRequestMessage(LogicAddr to,LogicAddr from,Rpc.Proto.rpcRequest req)
+    public RpcRequestMessage(LogicAddr to,LogicAddr from,rpcRequest req)
     {
         To = to;
         From = from;
@@ -250,20 +442,15 @@ public class RpcRequestMessage : ISSMsg
         var oriPos = stream.Position;
         var oriLength = stream.Length;
         try{
-            stream.Write(BitConverter.GetBytes(0));//占位符
+            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + Req.EncodeLen();
+            if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
+                throw new ClusterException("packet too large");
+            }       
+            stream.Write(BitConverter.GetBytes(Endian.Big(payloadLen)));     
             stream.WriteByte((byte)(0 | MessageConstont.RpcReq));
             stream.Write(BitConverter.GetBytes(Endian.Big((int)To.ToUint32())));
             stream.Write(BitConverter.GetBytes(Endian.Big((int)From.ToUint32()))); 
-            var pos2 = stream.Position;
-            Req.WriteTo(stream);
-            var pos3 = stream.Position;
-            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
-            if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
-                throw new ClusterException("packet too large");
-            }
-            stream.Position = oriPos;
-            stream.Write(BitConverter.GetBytes(Endian.Big(payloadLen)));
-            stream.Position = pos3;
+            Req.Encode(stream);
         }  catch (Exception e) {
             Console.WriteLine(e);
             stream.Position = oriPos;
@@ -279,9 +466,9 @@ public class RpcResponseMessage : ISSMsg
 
     public LogicAddr From{get;}
 
-    public Rpc.Proto.rpcResponse Resp{get;}
+    public rpcResponse Resp{get;}
 
-    public RpcResponseMessage(LogicAddr to,LogicAddr from,Rpc.Proto.rpcResponse resp)
+    public RpcResponseMessage(LogicAddr to,LogicAddr from,rpcResponse resp)
     {
         To = to;
         From = from;        
@@ -293,20 +480,17 @@ public class RpcResponseMessage : ISSMsg
         var oriPos = stream.Position;
         var oriLength = stream.Length;
         try{
-            stream.Write(BitConverter.GetBytes(0));//占位符
-            stream.WriteByte((byte)(0 | MessageConstont.RpcResp));
-            stream.Write(BitConverter.GetBytes(Endian.Big((int)To.ToUint32())));
-            stream.Write(BitConverter.GetBytes(Endian.Big((int)From.ToUint32()))); 
-            var pos2 = stream.Position;
-            Resp.WriteTo(stream);
-            var pos3 = stream.Position;
-            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + (int)(pos3 - pos2);
+
+            var payloadLen = MessageConstont.SizeFlag + MessageConstont.SizeToAndFrom + Resp.EncodeLen();
             if(payloadLen+MessageConstont.SizeLen > MessageConstont.MaxPacketSize) {
                 throw new ClusterException("packet too large");
             }
-            stream.Position = oriPos;
+
             stream.Write(BitConverter.GetBytes(Endian.Big(payloadLen)));
-            stream.Position = pos3;
+            stream.WriteByte((byte)(0 | MessageConstont.RpcResp));
+            stream.Write(BitConverter.GetBytes(Endian.Big((int)To.ToUint32())));
+            stream.Write(BitConverter.GetBytes(Endian.Big((int)From.ToUint32()))); 
+            Resp.Encode(stream);            
         }  catch (Exception e) {
             Console.WriteLine(e);
             stream.Position = oriPos;
@@ -350,7 +534,7 @@ public class SSMessageCodec : MessageCodecI
         if(to.ToUint32() != localLogicAddr) {
             //当前节点非目的地
             return new RelayMessage(to,from,new Span<byte>(buff,offset,length).ToArray());
-        } else if(msgType == MessageConstont.Msg) {
+        } else if(msgType == MessageConstont.PbMsg) {
             if(buff.Length - readpos < MessageConstont.SizeCmd) {
                 throw new ClusterException("invaild Message");
             }
@@ -359,14 +543,12 @@ public class SSMessageCodec : MessageCodecI
             var msg = ProtoMessage.Unmarshal("ss",cmd,buff,readpos,endpos-readpos);
             return new SSMessage(to,from,(ushort)cmd,msg);
         } else if (msgType == MessageConstont.RpcReq) {
-            using MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
-            Rpc.Proto.rpcRequest req = new Rpc.Proto.rpcRequest();
-            req.MergeFrom(memoryStream); 
+            rpcRequest req = new rpcRequest();
+            req.Decode(buff,readpos,endpos); 
             return new RpcRequestMessage(to,from,req);
         } else if (msgType == MessageConstont.RpcResp) {
-            using MemoryStream memoryStream = new MemoryStream(buff, readpos, endpos - readpos);
-            Rpc.Proto.rpcResponse resp = new Rpc.Proto.rpcResponse();
-            resp.MergeFrom(memoryStream);
+            rpcResponse resp = new rpcResponse();
+            resp.Decode(buff,readpos,endpos);
             return new RpcResponseMessage(to,from,resp);
         } else {
             throw new ClusterException("invaild Message");

@@ -23,6 +23,12 @@ public class Endian
         else return IPAddress.NetworkToHostOrder(n);        
     }    
 
+    static public ulong Little(ulong n)
+    {
+        if(v[0] == (byte)1) return n;
+        else return (ulong)IPAddress.NetworkToHostOrder((long)n);        
+    }    
+
     static public short Big(short n)
     {
         if(v[1] == (byte)1) return n;
@@ -40,5 +46,11 @@ public class Endian
         if(v[1] == (byte)1) return n;
         else return IPAddress.HostToNetworkOrder(n);
     }    
+
+    static public ulong Big(ulong n)
+    {
+        if(v[1] == (byte)1) return n;
+        else return (ulong)IPAddress.HostToNetworkOrder((long)n);
+    }  
 
 }

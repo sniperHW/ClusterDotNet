@@ -118,12 +118,12 @@ public class ClusterNode
         }
     }
 
-    internal void OnRpcResponse(Rpc.Proto.rpcResponse resp)
+    internal void OnRpcResponse(rpcResponse resp)
     {
         rpcCli.OnMessage(resp);
     }   
 
-    internal void OnRpcRequest(RpcChannelI channel, Rpc.Proto.rpcRequest req)
+    internal void OnRpcRequest(RpcChannelI channel, rpcRequest req)
     {
         rpcSvr.OnMessage(channel,req);
     }

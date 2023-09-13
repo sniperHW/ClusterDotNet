@@ -625,9 +625,9 @@ internal class Node : DiscoveryNode
             if(!(rpcReq is null) && !rpcReq.Oneway){
                 nextNode = self.GetNodeByLogicAddr(msg.From);
                 if(!(nextNode is null)) {
-                    var resp = new Rpc.Proto.rpcResponse();
-                    resp.ErrCode = RpcError.ErrOther;
-                    resp.ErrDesc = $"route message to target:{msg.To.ToString()} failed";
+                    var resp = new rpcResponse();
+                    resp.ErrCode = (short)RpcError.ErrOther;
+                    resp.ErrStr = $"route message to target:{msg.To.ToString()} failed";
                     nextNode.SendMessage(self,new RpcResponseMessage(msg.From,self.LocalAddr.LogicAddr,resp),DateTime.Now.AddSeconds(1),null);
                 }
             }
